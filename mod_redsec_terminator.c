@@ -15,7 +15,6 @@
 #include <unistd.h>
 
 module AP_MODULE_DECLARE_DATA mod_redsec_terminator_module;
-char *url = NULL;
 
 typedef struct {
     const char *socket_url;
@@ -30,8 +29,6 @@ static void *create_mod_redsec_terminator_config(apr_pool_t *p, char *dir) {
 static const char *set_socket_url(cmd_parms *cmd, void *cfg, const char *arg) {
     mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)cfg;
     config->socket_url = apr_pstrdup(cmd->pool, arg);
-	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Socket URL set to %s", config->socket_url);
-	url = apr_pstrdup(cmd->pool, arg);
     return NULL;
 }
 
@@ -107,23 +104,18 @@ static int mod_redsec_terminator_handler(request_rec *r) {
     } else {
         r->content_type = "text/html";
     }
-    
+
     if (apr_strnatcasecmp(r->handler, "mod_redsec_terminator")) {
         return DECLINED;
     }
 
-    // mod_redsec_terminator_config *config = ap_get_module_config(r->server->module_config, &mod_redsec_terminator_module);
-	// if (!config || !config->socket_url) {
-	// 	ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "mod_redsec_terminator: Configuration not initialized properly");
-	// 	return HTTP_INTERNAL_SERVER_ERROR;
-	// }
-
-	if (!url) {
+    mod_redsec_terminator_config *config = ap_get_module_config(r->per_dir_config, &mod_redsec_terminator_module);
+	if (!config || !config->socket_url) {
 		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "mod_redsec_terminator: Configuration not initialized properly");
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
 
-    const char *url_socket = url;
+    const char *url_socket = config->socket_url;
 
     json_object *json_obj = json_object_new_object();
     json_object *query_params_obj = json_object_new_object();
