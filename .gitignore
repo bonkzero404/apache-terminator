@@ -1,4 +1,7 @@
-*.o *.la *.lo *.slo
+*.o
+*.la
+*.lo
+*.slo
 .libs
 .vscode
 .config
