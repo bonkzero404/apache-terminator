@@ -99,6 +99,15 @@ static int send_to_tcp_socket(const char *url, const char *data) {
 }
 
 static int mod_redsec_terminator_handler(request_rec *r) {
+
+    const char *content_type = apr_table_get(r->headers_in, "Content-Type");
+
+    if (content_type) {
+        r->content_type = apr_pstrdup(r->pool, content_type);
+    } else {
+        r->content_type = "text/html";
+    }
+    
     if (apr_strnatcasecmp(r->handler, "mod_redsec_terminator")) {
         return DECLINED;
     }
@@ -138,6 +147,7 @@ static int mod_redsec_terminator_handler(request_rec *r) {
         }
     } else {
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "mod_redsec_terminator: No query parameters");
+
     }
 
     if (r->method_number == M_POST || r->method_number == M_PUT || r->method_number == M_PATCH || r->method_number == M_DELETE || r->method_number == M_GET) {
@@ -148,6 +158,7 @@ static int mod_redsec_terminator_handler(request_rec *r) {
             formData = readBody(r);
         }
         if (formData) {
+
             for (int i = 0; formData[i].key || formData[i].value; i++) {
                 json_object_object_add(body_obj, formData[i].key ? formData[i].key : "", json_object_new_string(formData[i].value ? formData[i].value : ""));
             }
