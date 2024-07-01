@@ -110,32 +110,6 @@ static int send_to_tcp_socket(const char *url, const char *data)
     return 0;
 }
 
-int process_intervention(Transaction *trans, request_rec *r)
-{
-    ModSecurityIntervention it;
-    it.status = 200; // Default status
-    it.url = NULL;
-    it.log = NULL;
-    it.disruptive = 0;
-
-    msc_intervention(trans, &it);
-
-    if (it.log != NULL)
-    {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Intervention log: %s", it.log);
-        free(it.log);
-    }
-    if (it.url != NULL)
-    {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Intervention URL: %s", it.url);
-        free(it.url);
-    }
-
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Intervention status: %d", it.status);
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Intervention disruptive: %d", it.disruptive);
-
-    return it.status;
-}
 static int mod_redsec_terminator_handler(request_rec *r)
 {
     const char *content_type = apr_table_get(r->headers_in, "Content-Type");
@@ -162,29 +136,13 @@ static int mod_redsec_terminator_handler(request_rec *r)
     }
     const char *url_socket = config->socket_url;
 
-    ModSecValuePair *modSecVal;
-
-    modSecVal = mod_sec_handler(r);
-
-    if (modSecVal != NULL)
-    {
-        ap_rprintf(r, "STATUS: %d\n", modSecVal->status);
-        // Jika Anda juga ingin menampilkan pesan, pastikan bahwa pesan tidak NULL
-        if (modSecVal->message != NULL)
-        {
-            ap_rprintf(r, "MESSAGE: %s\n", modSecVal->message);
-        }
-
-        r->status = modSecVal->status;
-
-
-        free((char *) modSecVal->message);; // Pastikan untuk membebaskan memori yang dialokasikan untuk pesan
-        free(modSecVal);          // Pastikan untuk membebaskan memori yang dialokasikan untuk ModSecValuePair
-    }
-
+    
     json_object *json_obj = json_object_new_object();
+    json_object *msc_obj = json_object_new_object();
     json_object *query_params_obj = json_object_new_object();
     json_object *body_obj = json_object_new_object();
+
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Log body OBJ:");
 
     if (r->args)
     {
@@ -248,6 +206,35 @@ static int mod_redsec_terminator_handler(request_rec *r)
     json_object_object_add(json_obj, "uri", json_object_new_string(r->uri));
     json_object_object_add(json_obj, "method", json_object_new_string(r->method));
     json_object_object_add(json_obj, "remote_ip", json_object_new_string(r->useragent_ip));
+
+
+    // MOD
+    ModSecValuePair *modSecVal;
+
+    modSecVal = mod_sec_handler(r);
+
+    if (modSecVal != NULL && modSecVal->status != 200)
+    {
+        ap_rprintf(r, "STATUS: %d\n", modSecVal->status);
+
+        json_object_object_add(json_obj, "msc_report", msc_obj);
+
+        json_object_object_add(msc_obj, "status_msc", json_object_new_int(modSecVal->status));
+
+        if (modSecVal->message != NULL)
+        {
+            json_object_object_add(msc_obj, "message_msc", json_object_new_string(modSecVal->message));
+            ap_rprintf(r, "MESSAGE: %s\n", modSecVal->message);
+        }
+
+
+        r->status = modSecVal->status;
+
+
+        free((char *) modSecVal->message);
+        free(modSecVal);
+    }
+
 
     const char *json_str = json_object_to_json_string(json_obj);
 
