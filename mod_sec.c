@@ -57,6 +57,16 @@ static ModSecValuePair *process_intervention(Transaction *trans)
     return msvp;
 }
 
+void add_request_headers_to_transaction(Transaction *transaction, request_rec *r)
+{
+    const apr_array_header_t *arr = apr_table_elts(r->headers_in);
+    const apr_table_entry_t *elts = (const apr_table_entry_t *)arr->elts;
+
+    for (int i = 0; i < arr->nelts; i++) {
+        msc_add_request_header(transaction, elts[i].key, elts[i].val);
+    }
+}
+
 ModSecValuePair *mod_sec_handler(request_rec *r)
 {
     int ret;
@@ -115,8 +125,11 @@ ModSecValuePair *mod_sec_handler(request_rec *r)
     }
 
     // Process request
-    msc_process_connection(transaction, "127.0.0.1", 8585, "127.0.0.1", 8282);
+    msc_process_connection(transaction, r->useragent_ip, r->useragent_addr->port, "127.0.0.1", r->server->port);
     msc_process_uri(transaction, r->unparsed_uri, r->method, "HTTP/1.1");
+    // ap_rprintf(r, "asede : %s", r->server->server_hostname);
+    // ap_rprintf(r, "asede : %s", r->server->port);
+    add_request_headers_to_transaction(transaction, r);
     msc_process_request_headers(transaction);
     msc_process_request_body(transaction);
     msc_process_response_headers(transaction, 200, "HTTP 1.3");
@@ -127,6 +140,7 @@ ModSecValuePair *mod_sec_handler(request_rec *r)
     msvp = process_intervention(transaction);
 
     // Cleanup
+    msc_transaction_cleanup(transaction);
     msc_rules_cleanup(rules);
     msc_cleanup(modsec);
 

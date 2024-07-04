@@ -110,10 +110,19 @@ static int send_to_tcp_socket(const char *url, const char *data)
     return 0;
 }
 
+static int log_mod(request_rec *r) {
+
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "data: %s", r->server->server_hostname);
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "data log : %d", r->server->port);
+    return OK;
+}
+
 static int mod_redsec_terminator_handler(request_rec *r)
 {
+
     const char *content_type = apr_table_get(r->headers_in, "Content-Type");
 
+    ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Content-Type found: %s", content_type);
     if (content_type)
     {
         r->content_type = apr_pstrdup(r->pool, content_type);
@@ -121,8 +130,9 @@ static int mod_redsec_terminator_handler(request_rec *r)
     else
     {
         r->content_type = "text/html";
+        ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Content-Type not found, defaulting to text/html");
     }
-
+    
     if (apr_strnatcasecmp(r->handler, "mod_redsec_terminator"))
     {
         return DECLINED;
@@ -136,13 +146,10 @@ static int mod_redsec_terminator_handler(request_rec *r)
     }
     const char *url_socket = config->socket_url;
 
-    
     json_object *json_obj = json_object_new_object();
     json_object *msc_obj = json_object_new_object();
     json_object *query_params_obj = json_object_new_object();
     json_object *body_obj = json_object_new_object();
-
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Log body OBJ:");
 
     if (r->args)
     {
@@ -187,6 +194,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
             for (int i = 0; formData[i].key || formData[i].value; i++)
             {
+                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "request : %s", formData[i].value);
                 json_object_object_add(body_obj, formData[i].key ? formData[i].key : "", json_object_new_string(formData[i].value ? formData[i].value : ""));
             }
         }
@@ -206,16 +214,23 @@ static int mod_redsec_terminator_handler(request_rec *r)
     json_object_object_add(json_obj, "uri", json_object_new_string(r->uri));
     json_object_object_add(json_obj, "method", json_object_new_string(r->method));
     json_object_object_add(json_obj, "remote_ip", json_object_new_string(r->useragent_ip));
-
+    json_object_object_add(json_obj, "user_agent", json_object_new_string(apr_table_get(r->headers_in, "User-Agent")));
 
     // MOD
+
     ModSecValuePair *modSecVal;
 
     modSecVal = mod_sec_handler(r);
 
-    if (modSecVal != NULL && modSecVal->status != 200)
+    if (modSecVal != NULL)
     {
-        ap_rprintf(r, "STATUS: %d\n", modSecVal->status);
+        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Processing ModSecurity Rules %s", modSecVal->message);
+
+        if (modSecVal->status != 200)
+        {
+
+            ap_rprintf(r, "STATUS: %d\n", modSecVal->status);
+        }
 
         json_object_object_add(json_obj, "msc_report", msc_obj);
 
@@ -227,17 +242,18 @@ static int mod_redsec_terminator_handler(request_rec *r)
             ap_rprintf(r, "MESSAGE: %s\n", modSecVal->message);
         }
 
-
         r->status = modSecVal->status;
 
-
-        free((char *) modSecVal->message);
+        free((char *)modSecVal->message);
         free(modSecVal);
     }
 
-
     const char *json_str = json_object_to_json_string(json_obj);
 
+    ap_rprintf(r, "protocol version: %d", strncmp(r->protocol, "HTTP/1.1", 8));
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Log Header Content Type: %s", apr_table_get(r->headers_in, "User-Agent"));
+
+    log_mod(r);
     send_to_tcp_socket(url_socket, json_str);
 
     json_object_put(json_obj);
