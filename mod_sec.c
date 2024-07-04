@@ -1,6 +1,6 @@
 #include "mod_sec.h"
 
-static ModSecValuePair *process_intervention(Transaction *trans)
+static ModSecValuePair *process_intervention(request_rec *r, Transaction *trans)
 {
     ModSecValuePair *msvp = malloc(sizeof(ModSecValuePair));  // Allocate memory for ModSecValuePair
     if (!msvp) {
@@ -19,7 +19,7 @@ static ModSecValuePair *process_intervention(Transaction *trans)
 
     if (it.log != NULL)
     {
-        printf("Detected message: %s\n", it.log);
+        // ap_rprintf(r, "Detected message: %s\n", it.log);
 
         // Example parsing to extract specific message
         const char *xssMsg = "msg \"";
@@ -124,11 +124,17 @@ ModSecValuePair *mod_sec_handler(request_rec *r)
         return NULL;
     }
 
+    size_t base_len = strlen("http://localhost:8282");
+    size_t uri_len = strlen(r->unparsed_uri);
+    char *full_uri = malloc(base_len + uri_len + 1);
+
+    strcpy(full_uri, "http://localhost:8282");
+    strcat(full_uri, r->unparsed_uri);
+
+    // msc_set_log_cb(modsec, NULL);
     // Process request
-    msc_process_connection(transaction, r->useragent_ip, r->useragent_addr->port, "127.0.0.1", r->server->port);
-    msc_process_uri(transaction, r->unparsed_uri, r->method, "HTTP/1.1");
-    // ap_rprintf(r, "asede : %s", r->server->server_hostname);
-    // ap_rprintf(r, "asede : %s", r->server->port);
+    msc_process_connection(transaction, "127.0.0.1", 8282, "127.0.0.1", r->server->port);
+    msc_process_uri(transaction, full_uri, r->method, "HTTP/1.1");
     add_request_headers_to_transaction(transaction, r);
     msc_process_request_headers(transaction);
     msc_process_request_body(transaction);
@@ -137,9 +143,10 @@ ModSecValuePair *mod_sec_handler(request_rec *r)
     msc_process_logging(transaction);
 
     // Retrieve intervention details
-    msvp = process_intervention(transaction);
+    msvp = process_intervention(r, transaction);
 
     // Cleanup
+    free(full_uri);
     msc_transaction_cleanup(transaction);
     msc_rules_cleanup(rules);
     msc_cleanup(modsec);
