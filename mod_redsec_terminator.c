@@ -70,7 +70,6 @@ static int send_to_tcp_socket(const char *url, const char *data)
     if ((status = getaddrinfo(hostname, port_str, &hints, &res)) != 0)
     {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: getaddrinfo error: %s", gai_strerror(status));
-        return -1;
     }
 
     for (p = res; p != NULL; p = p->ai_next)
@@ -83,8 +82,8 @@ static int send_to_tcp_socket(const char *url, const char *data)
 
         if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1)
         {
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Error connecting to socket: %s", strerror(errno));
             close(sockfd);
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Error connecting to socket");
             continue;
         }
 
@@ -102,13 +101,14 @@ static int send_to_tcp_socket(const char *url, const char *data)
     if (bytes_sent == -1)
     {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Error sending data");
+        close(sockfd);
     }
 
     close(sockfd);
     return 0;
 }
-static int log_mod(request_rec *r)
-{
+
+static int log_mod(request_rec *r) {
 
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "data: %s", r->server->server_hostname);
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "data log : %d", r->server->port);
@@ -130,7 +130,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
         r->content_type = "text/html";
         ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Content-Type not found, defaulting to text/html");
     }
-
+    
     if (apr_strnatcasecmp(r->handler, "mod_redsec_terminator"))
     {
         return DECLINED;
@@ -144,32 +144,10 @@ static int mod_redsec_terminator_handler(request_rec *r)
     }
     const char *url_socket = config->socket_url;
 
-    ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Creating new JSON object");
-
-    
     json_object *json_obj = json_object_new_object();
-    if (!json_obj)
-    {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Failed to create JSON object");
-        return HTTP_INTERNAL_SERVER_ERROR;
-    }
-
+    json_object *msc_obj = json_object_new_object();
     json_object *query_params_obj = json_object_new_object();
-    if (!query_params_obj)
-    {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Failed to create query_params JSON object");
-        json_object_put(json_obj);
-        return HTTP_INTERNAL_SERVER_ERROR;
-    }
-
     json_object *body_obj = json_object_new_object();
-    if (!body_obj)
-    {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Failed to create body JSON object");
-        json_object_put(json_obj);
-        json_object_put(query_params_obj);
-        return HTTP_INTERNAL_SERVER_ERROR;
-    }
 
     if (r->args)
     {
@@ -238,23 +216,9 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
     // MOD
 
-
     ModSecValuePair *modSecVal;
 
     modSecVal = mod_sec_handler(r, body_obj);
-
-    json_object *msc_obj = json_object_new_object();
-
-    if (!msc_obj)
-        {
-            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Failed to create msc JSON object");
-            json_object_put(json_obj);
-            json_object_put(query_params_obj);
-            json_object_put(body_obj);
-            free((char *)modSecVal->message);
-            free(modSecVal);
-            return HTTP_INTERNAL_SERVER_ERROR;
-        }
 
     if (modSecVal != NULL)
     {
@@ -284,6 +248,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
     const char *json_str = json_object_to_json_string(json_obj);
 
+
     ap_rprintf(r, "body: %s", json_object_to_json_string(body_obj));
 
     ap_rprintf(r, "protocol version: %d", strncmp(r->protocol, "HTTP/1.1", 8));
@@ -293,7 +258,6 @@ static int mod_redsec_terminator_handler(request_rec *r)
     send_to_tcp_socket(url_socket, json_str);
 
     json_object_put(json_obj);
-    json_object_put(msc_obj);
     json_object_put(query_params_obj);
     json_object_put(body_obj);
 
