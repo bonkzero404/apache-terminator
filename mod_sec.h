@@ -8,8 +8,9 @@
 #include "http_log.h"
 #include "modsecurity/modsecurity.h"
 #include "modsecurity/intervention.h"
+#include "modsecurity/transaction.h"
 #include "modsecurity/rules_set.h"
 
-ModSecValuePair *mod_sec_handler(request_rec *r);
+ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj);
 
 #endif // MOD_SEC_H
