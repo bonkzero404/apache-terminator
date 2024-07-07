@@ -20,7 +20,7 @@ keyValuePair *readJson(request_rec *r)
         kvp = apr_pcalloc(r->pool, sizeof(keyValuePair) * (json_object_object_length(json_obj) + 1));
 
         if (kvp == NULL) {
-            json_object_put(json_obj);
+            // json_object_put(json_obj);
             return NULL;  // Handle memory allocation failure
         }
 
@@ -32,7 +32,7 @@ keyValuePair *readJson(request_rec *r)
             i++;
         }
 
-        json_object_put(json_obj);
+        // json_object_put(json_obj);
 
         kvp[i].key = NULL;
 

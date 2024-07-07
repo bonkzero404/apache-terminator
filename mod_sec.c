@@ -72,12 +72,14 @@ void add_request_headers_to_transaction(Transaction *transaction, request_rec *r
 
 void add_request_body(Transaction *transaction, json_object *json_obj)
 {
-    const char *body = json_object_to_json_string(json_obj);
+    if (json_object_object_length(json_obj) != 0)
+    {
 
-    msc_append_request_body(transaction, body, strlen(body));
-    
+        const char *body = json_object_to_json_string(json_obj);
+
+        msc_append_request_body(transaction, body, strlen(body));
+    }
 }
-
 
 ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj)
 {
@@ -158,10 +160,9 @@ ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj)
     msc_process_response_body(transaction);
     msc_process_logging(transaction);
 
-
     // Retrieve intervention details
     msvp = process_intervention(r, transaction);
-    
+
     // Cleanup
     // free(full_uri);
     msc_transaction_cleanup(transaction);

@@ -112,6 +112,7 @@ static int log_mod(request_rec *r) {
 
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "data: %s", r->server->server_hostname);
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "data log : %d", r->server->port);
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "request number : %d", r->method_number);
     return OK;
 }
 
@@ -176,6 +177,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "mod_redsec_terminator: No query parameters");
     }
 
+    log_mod(r);
     if (r->method_number == M_POST || r->method_number == M_PUT || r->method_number == M_PATCH || r->method_number == M_DELETE || r->method_number == M_GET)
     {
         keyValuePair *formData;
@@ -192,10 +194,11 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
             for (int i = 0; formData[i].key || formData[i].value; i++)
             {
-                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "request : %s", formData[i].value);
                 json_object_object_add(body_obj, formData[i].key ? formData[i].key : "", json_object_new_string(formData[i].value ? formData[i].value : ""));
             }
         }
+    } else {
+        ap_rprintf(r, "Method is empty %d\n", M_POST);
     }
 
     json_object_object_add(json_obj, "query_params", query_params_obj);
@@ -257,9 +260,9 @@ static int mod_redsec_terminator_handler(request_rec *r)
     log_mod(r);
     send_to_tcp_socket(url_socket, json_str);
 
-    json_object_put(json_obj);
-    json_object_put(query_params_obj);
-    json_object_put(body_obj);
+    // json_object_put(json_obj);
+    // json_object_put(query_params_obj);
+    // json_object_put(body_obj);
 
     return OK;
 }
