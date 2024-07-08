@@ -241,6 +241,9 @@ static int mod_redsec_terminator_handler(request_rec *r)
         {
             json_object_object_add(msc_obj, "message_msc", json_object_new_string(modSecVal->message));
             ap_rprintf(r, "MESSAGE: %s\n", modSecVal->message);
+
+            return HTTP_FORBIDDEN;
+
         }
 
         r->status = modSecVal->status;
@@ -251,10 +254,6 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
     const char *json_str = json_object_to_json_string(json_obj);
 
-
-    ap_rprintf(r, "body: %s", json_object_to_json_string(body_obj));
-
-    ap_rprintf(r, "protocol version: %d", strncmp(r->protocol, "HTTP/1.1", 8));
     ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Log Header Content Type: %s", apr_table_get(r->headers_in, "User-Agent"));
 
     log_mod(r);
@@ -264,7 +263,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
     // json_object_put(query_params_obj);
     // json_object_put(body_obj);
 
-    return OK;
+    return DECLINED;
 }
 
 static void mod_redsec_terminator_register_hooks(apr_pool_t *p)

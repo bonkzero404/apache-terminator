@@ -72,13 +72,12 @@ void add_request_headers_to_transaction(Transaction *transaction, request_rec *r
 
 void add_request_body(Transaction *transaction, json_object *json_obj)
 {
-    if (json_object_object_length(json_obj) != 0)
-    {
+    
+    
 
         const char *body = json_object_to_json_string(json_obj);
 
         msc_append_request_body(transaction, body, strlen(body));
-    }
 }
 
 ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj)
@@ -152,7 +151,13 @@ ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj)
     msc_process_uri(transaction, r->unparsed_uri, r->method, "HTTP/1.1");
     add_request_headers_to_transaction(transaction, r);
 
-    add_request_body(transaction, json_obj);
+    // ap_rprintf(r, "asede %d\n", json_object_object_length(json_obj));
+
+    if (json_object_object_length(json_obj) != 0) {
+
+        add_request_body(transaction, json_obj);
+    }
+
 
     msc_process_request_headers(transaction);
     msc_process_request_body(transaction);
