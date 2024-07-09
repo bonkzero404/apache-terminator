@@ -23,6 +23,152 @@ typedef struct
     const char *socket_url;
 } mod_redsec_terminator_config;
 
+char *trim_newline(char *str) {
+    char *end = str + strlen(str) - 1;
+    while (end > str && (*end == '\r' || *end == '\n')) {
+        *end = '\0';
+        end--;
+    }
+    return str;
+}
+
+
+static keyValuePair *parse_multipart_form_data(request_rec *r)
+{
+    int rc;
+
+    const char *content_type = apr_table_get(r->headers_in, "Content-Type");
+
+    if ((rc = ap_setup_client_block(r, REQUEST_CHUNKED_ERROR)) != OK)
+    {
+        return NULL;
+    }
+
+    const char *boundary = strstr(content_type, "boundary=");
+    if (!boundary)
+    {
+        return NULL;
+    }
+
+    boundary += strlen("boundary=");
+    char *boundary_str = apr_pstrdup(r->pool, boundary);
+    char *end_boundary_str = apr_pstrcat(r->pool, "--", boundary_str, "--", NULL);
+
+    keyValuePair *kvp = NULL;
+    int kvp_count = 0;
+
+    if (ap_should_client_block(r))
+    {
+        char argsbuffer[HUGE_STRING_LEN];
+        int len_read;
+        apr_array_header_t *pairs = apr_array_make(r->pool, 10, sizeof(keyValuePair));
+
+        while ((len_read = ap_get_client_block(r, argsbuffer, sizeof(argsbuffer))) > 0)
+        {
+            char *part_start = argsbuffer;
+            while ((part_start = strstr(part_start, boundary_str)))
+            {
+                
+                part_start += strlen(boundary_str);
+
+                if (*part_start == '-' && *(part_start + 1) == '-')
+                {
+                    break; // End of multipart data
+                }
+
+                
+                part_start += 2; // Skip the boundary line break
+
+                char *part_end = strstr(part_start, boundary_str);
+
+                if (!part_end)
+                {
+                    part_end = argsbuffer + len_read;
+                }
+                else
+                {
+                    part_end -= 2; // Remove the trailing line break before boundary
+                }
+
+                // *part_end = '\0';
+               
+
+                char *header_end = strstr(part_start, "\r\n\r\n");
+
+
+
+                if (header_end)
+                {
+                    *header_end = '\0';
+                    char *body_start = header_end + 4;
+
+                    if (body_start >= part_end)
+                    {
+                        break;
+                    }
+
+
+
+                    char *content_disposition = strstr(part_start, "Content-Disposition:");
+                    char *content_type_start = strstr(part_start, "Content-Type:");
+                    if (content_disposition)
+                    {
+                        char *name_start = strstr(content_disposition, "name=\"");
+                        if (name_start)
+                        {
+                            name_start += strlen("name=\"");
+                            char *name_end = strstr(name_start, "\"");
+                            if (name_end)
+                            {
+                                *name_end = '\0';
+                                char *key = apr_pstrdup(r->pool, name_start);
+
+                                char *value = apr_pstrndup(r->pool, body_start, part_end - body_start);
+                                value = trim_newline(value);
+
+                                keyValuePair *pair = (keyValuePair *)apr_array_push(pairs);
+                                pair->key = key;
+                                pair->value = value;
+
+                                ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "mod_redsec_terminator: Read key-value pair: %s = %s", key, value);
+                            }
+                        }
+                    }
+
+                    if (content_type_start)
+                    {
+                        content_type_start += strlen("Content-Type:");
+                        while (*content_type_start == ' ')
+                        {
+                            content_type_start++;
+                        }
+                        char *content_type_end = strstr(content_type_start, "\r\n");
+                        if (content_type_end)
+                        {
+                            *content_type_end = '\0';
+                            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "mod_redsec_terminator: Content-Type: %s", content_type_start);
+                        }
+                    }
+                }
+
+
+
+                part_start = part_end;
+            }
+        }
+
+        // Output pairs to the response
+        kvp = apr_pcalloc(r->pool, sizeof(keyValuePair) * (pairs->nelts + 1));
+        for (int i = 0; i < pairs->nelts; i++)
+        {
+            keyValuePair *pair = &((keyValuePair *)pairs->elts)[i];
+            kvp[i].key = pair->key;
+            kvp[i].value = pair->value;
+        }
+    }
+    return kvp;
+}
+
 static void *create_mod_redsec_terminator_config(apr_pool_t *p, char *dir)
 {
     mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)apr_pcalloc(p, sizeof(mod_redsec_terminator_config));
@@ -108,7 +254,8 @@ static int send_to_tcp_socket(const char *url, const char *data)
     return 0;
 }
 
-static int log_mod(request_rec *r) {
+static int log_mod(request_rec *r)
+{
 
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "data: %s", r->server->server_hostname);
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "data log : %d", r->server->port);
@@ -131,7 +278,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
         r->content_type = "text/html";
         ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Content-Type not found, defaulting to text/html");
     }
-    
+
     if (apr_strnatcasecmp(r->handler, "mod_redsec_terminator"))
     {
         return DECLINED;
@@ -178,12 +325,17 @@ static int mod_redsec_terminator_handler(request_rec *r)
     }
 
     log_mod(r);
+
     if (r->method_number == M_POST || r->method_number == M_PUT || r->method_number == M_PATCH || r->method_number == M_DELETE || r->method_number == M_GET)
     {
+        const char *prefixFormData = "multipart/form-data";
         keyValuePair *formData;
         if (apr_strnatcasecmp(r->content_type, "application/json") == 0)
         {
             formData = readJson(r);
+        } else if (strncmp(r->content_type, prefixFormData, strlen(prefixFormData)) == 0)
+        {
+            formData = parse_multipart_form_data(r);
         }
         else
         {
@@ -197,7 +349,9 @@ static int mod_redsec_terminator_handler(request_rec *r)
                 json_object_object_add(body_obj, formData[i].key ? formData[i].key : "", json_object_new_string(formData[i].value ? formData[i].value : ""));
             }
         }
-    } else {
+    }
+    else
+    {
         ap_rprintf(r, "Method is empty %d\n", M_POST);
     }
 
@@ -243,7 +397,6 @@ static int mod_redsec_terminator_handler(request_rec *r)
             ap_rprintf(r, "MESSAGE: %s\n", modSecVal->message);
 
             return HTTP_FORBIDDEN;
-
         }
 
         r->status = modSecVal->status;
@@ -253,6 +406,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
     }
 
     const char *json_str = json_object_to_json_string(json_obj);
+
 
     ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Log Header Content Type: %s", apr_table_get(r->headers_in, "User-Agent"));
 
