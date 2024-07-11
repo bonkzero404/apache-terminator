@@ -301,22 +301,25 @@ static int mod_redsec_terminator_handler(request_rec *r)
         ap_rprintf(r, "Method is empty %d\n", M_POST);
     }
 
-    json_object_object_add(json_obj, "query_params", query_params_obj);
-    json_object_object_add(json_obj, "body", body_obj);
-    if (strncmp(r->protocol, "HTTP/1.1", 8) == 0)
-    {
-        json_object_object_add(json_obj, "protocol", json_object_new_string("http"));
-    }
-    else if (strncmp(r->protocol, "HTTP/2", 6) == 0)
-    {
-        json_object_object_add(json_obj, "protocol", json_object_new_string("https"));
-    }
-    json_object_object_add(json_obj, "host", json_object_new_string(r->hostname));
-    json_object_object_add(json_obj, "uri", json_object_new_string(r->uri));
-    json_object_object_add(json_obj, "method", json_object_new_string(r->method));
-    json_object_object_add(json_obj, "remote_ip", json_object_new_string(r->useragent_ip));
-    json_object_object_add(json_obj, "user_agent", json_object_new_string(apr_table_get(r->headers_in, "User-Agent")));
+	if (json_obj != NULL) {
+		json_object_object_add(json_obj, "query_params", query_params_obj);
+		json_object_object_add(json_obj, "body", body_obj);
+		if (strncmp(r->protocol, "HTTP/1.1", 8) == 0)
+		{
+			json_object_object_add(json_obj, "protocol", json_object_new_string("http"));
+		}
+		else if (strncmp(r->protocol, "HTTP/2", 6) == 0)
+		{
+			json_object_object_add(json_obj, "protocol", json_object_new_string("https"));
+		}
+		json_object_object_add(json_obj, "host", json_object_new_string(r->hostname));
+		json_object_object_add(json_obj, "uri", json_object_new_string(r->uri));
+		json_object_object_add(json_obj, "method", json_object_new_string(r->method));
+		json_object_object_add(json_obj, "remote_ip", json_object_new_string(r->useragent_ip));
+		json_object_object_add(json_obj, "user_agent", json_object_new_string(apr_table_get(r->headers_in, "User-Agent")));
+	}
 
+	const char *json_str = json_object_to_json_string(json_obj);
     // MOD
 
     ModSecValuePair *modSecVal;
@@ -342,6 +345,11 @@ static int mod_redsec_terminator_handler(request_rec *r)
             json_object_object_add(msc_obj, "message_msc", json_object_new_string(modSecVal->message));
             ap_rprintf(r, "MESSAGE: %s\n", modSecVal->message);
 
+            const char *json_string = json_object_to_json_string(json_obj);
+
+
+			send_to_tcp_socket(url_socket, json_string);
+
             return HTTP_FORBIDDEN;
         }
 
@@ -350,8 +358,6 @@ static int mod_redsec_terminator_handler(request_rec *r)
         free((char *)modSecVal->message);
         free(modSecVal);
     }
-
-    const char *json_str = json_object_to_json_string(json_obj);
 
     ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Log Header Content Type: %s", apr_table_get(r->headers_in, "User-Agent"));
 
