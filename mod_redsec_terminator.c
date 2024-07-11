@@ -6,6 +6,7 @@
 #include "json-c/json.h"
 #include "body_reader.h"
 #include "json_reader.h"
+#include "form_reader.h"
 #include "http_log.h"
 #include "mod_sec.h"
 
@@ -14,7 +15,6 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <unistd.h>
-// #include "mod_security.h"
 
 module AP_MODULE_DECLARE_DATA mod_redsec_terminator_module;
 
@@ -108,7 +108,8 @@ static int send_to_tcp_socket(const char *url, const char *data)
     return 0;
 }
 
-static int log_mod(request_rec *r) {
+static int log_mod(request_rec *r)
+{
 
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "data: %s", r->server->server_hostname);
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "data log : %d", r->server->port);
@@ -178,12 +179,17 @@ static int mod_redsec_terminator_handler(request_rec *r)
     }
 
     log_mod(r);
+
     if (r->method_number == M_POST || r->method_number == M_PUT || r->method_number == M_PATCH || r->method_number == M_DELETE || r->method_number == M_GET)
     {
+        const char *prefixFormData = "multipart/form-data";
         keyValuePair *formData;
         if (apr_strnatcasecmp(r->content_type, "application/json") == 0)
         {
             formData = readJson(r);
+        } else if (strncmp(r->content_type, prefixFormData, strlen(prefixFormData)) == 0)
+        {
+            formData = parse_multipart_form_data(r);
         }
         else
         {
@@ -197,7 +203,9 @@ static int mod_redsec_terminator_handler(request_rec *r)
                 json_object_object_add(body_obj, formData[i].key ? formData[i].key : "", json_object_new_string(formData[i].value ? formData[i].value : ""));
             }
         }
-    } else {
+    }
+    else
+    {
         ap_rprintf(r, "Method is empty %d\n", M_POST);
     }
 
@@ -248,7 +256,6 @@ static int mod_redsec_terminator_handler(request_rec *r)
 			send_to_tcp_socket(url_socket, json_str);
 
             return HTTP_FORBIDDEN;
-
         }
 
         r->status = modSecVal->status;
