@@ -15,25 +15,93 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <clamav.h>
 
 module AP_MODULE_DECLARE_DATA mod_redsec_terminator_module;
 
 typedef struct
 {
     const char *socket_url;
+    int clamav_enabled;
+    struct cl_engine *engine;
+    struct cl_scan_options options;
 } mod_redsec_terminator_config;
 
 static void *create_mod_redsec_terminator_config(apr_pool_t *p, char *dir)
 {
     mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)apr_pcalloc(p, sizeof(mod_redsec_terminator_config));
     config->socket_url = NULL; // Initialize socket_url to NULL
+    config->clamav_enabled = 0;
+    config->engine = NULL;
     return (void *)config;
 }
 
+
+
+static int initialize_clamav(mod_redsec_terminator_config *config)
+{
+    // Initialize ClamAV engine
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "failed load %d\n", config->clamav_enabled);
+
+    config->engine = cl_engine_new();
+    if (!config->engine)
+    {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to create ClamAV engine");
+    }
+
+    // Initialize ClamAV
+    if (cl_init(CL_INIT_DEFAULT) != CL_SUCCESS)
+    {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to initialize ClamAV");
+        cl_engine_free(config->engine);
+    }
+
+    // Load virus database
+    const char *dbclamav = "/var/lib/clamav";
+    if (cl_load(dbclamav, config->engine, NULL, CL_DB_STDOPT) != CL_SUCCESS)
+    {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to load virus database from %s", dbclamav);
+        cl_engine_free(config->engine);
+    }
+
+    // Compile engine after loading database
+    if (cl_engine_compile(config->engine) != CL_SUCCESS)
+    {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to compile ClamAV engine");
+        cl_engine_free(config->engine);
+    }
+
+    config->options.general = CL_DB_STDOPT;
+    return 0;
+}
+
+
 static const char *set_socket_url(cmd_parms *cmd, void *cfg, const char *arg)
 {
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "config set %s", arg);
+
     mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)cfg;
     config->socket_url = apr_pstrdup(cmd->pool, arg);
+    return NULL;
+}
+
+static const char *set_clamav_engine(cmd_parms *cmd, void *cfg, const char *arg)
+{
+    mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)cfg;
+
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "config set %s", arg);
+
+    if (strcasecmp(arg, "ON") == 0)
+    {
+
+        config->clamav_enabled = 1;
+        initialize_clamav(config);
+    }
+    else if (strcasecmp(arg, "OFF") == 0)
+    {
+        config->clamav_enabled = 0;
+    }
+
     return NULL;
 }
 
@@ -146,6 +214,29 @@ static int mod_redsec_terminator_handler(request_rec *r)
     }
     const char *url_socket = config->socket_url;
 
+    if (config->clamav_enabled == 1)
+    {
+
+        const char *file = "/home/redtech/developments/mscexample/testfile.txt";
+        const char *virname;
+
+        int ret = cl_scanfile(file, &virname, NULL, config->engine, &config->options);
+        ap_rprintf(r, "Check result: %d\n", ret);
+
+        if (ret == CL_VIRUS)
+        {
+            ap_rprintf(r, "Virus found\n");
+        }
+        else if (ret != CL_CLEAN)
+        {
+            ap_rprintf(r, "Error scanning\n");
+        }
+        else
+        {
+            ap_rprintf(r, "Clean\n");
+        }
+    }
+
     json_object *json_obj = json_object_new_object();
     json_object *msc_obj = json_object_new_object();
     json_object *query_params_obj = json_object_new_object();
@@ -187,7 +278,8 @@ static int mod_redsec_terminator_handler(request_rec *r)
         if (apr_strnatcasecmp(r->content_type, "application/json") == 0)
         {
             formData = readJson(r);
-        } else if (strncmp(r->content_type, prefixFormData, strlen(prefixFormData)) == 0)
+        }
+        else if (strncmp(r->content_type, prefixFormData, strlen(prefixFormData)) == 0)
         {
             formData = parse_multipart_form_data(r);
         }
@@ -261,7 +353,6 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
     const char *json_str = json_object_to_json_string(json_obj);
 
-
     ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Log Header Content Type: %s", apr_table_get(r->headers_in, "User-Agent"));
 
     log_mod(r);
@@ -274,6 +365,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
     return DECLINED;
 }
 
+
 static void mod_redsec_terminator_register_hooks(apr_pool_t *p)
 {
     ap_hook_handler(mod_redsec_terminator_handler, NULL, NULL, APR_HOOK_MIDDLE);
@@ -282,6 +374,8 @@ static void mod_redsec_terminator_register_hooks(apr_pool_t *p)
 static const command_rec mod_redsec_terminator_cmds[] = {
     AP_INIT_TAKE1("RedSecTerminatorURLSocket", set_socket_url, NULL, RSRC_CONF,
                   "Specify the custom socket URL for data transmission"),
+    AP_INIT_TAKE1("RedSecTerminatorClamAVengine", set_clamav_engine, NULL, RSRC_CONF,
+                  "Enable or disable ClamAV engine (ON/OFF)"),
     {NULL}};
 
 module AP_MODULE_DECLARE_DATA mod_redsec_terminator_module = {

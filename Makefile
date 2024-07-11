@@ -5,8 +5,8 @@ SRC_FILES = mod_redsec_terminator.c util.c body_reader.c json_reader.c form_read
 OUTPUT_FILE = $(MODULE_NAME).so
 
 CC = gcc
-CFLAGS = -std=c17 -fPIC -Wall -I/usr/include/httpd -I/usr/include/apr-1 -I/usr/include/apr-util-1 -I/usr/include/json-c -I/usr/local/modsecurity/include
-LDFLAGS = -shared -L/usr/local/modsecurity/lib -lmodsecurity -ljson-c
+CFLAGS = -std=c17 -fPIC -Wall -I/usr/include/httpd -I/usr/include/apr-1 -I/usr/include/apr-util-1 -I/usr/include/json-c -I/usr/include/json-c -I/usr/local/modsecurity/include
+LDFLAGS = -shared -L/usr/local/modsecurity/lib -lmodsecurity -ljson-c -lclamav
 
 APXS = apxs
 
