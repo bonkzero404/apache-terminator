@@ -57,7 +57,7 @@ static int initialize_clamav(mod_redsec_terminator_config *config)
     }
 
     // Load virus database
-    const char *dbclamav = "/var/lib/clamav";
+    const char *dbclamav = "/opt/homebrew/var/lib/clamav";
     if (cl_load(dbclamav, config->engine, NULL, CL_DB_STDOPT) != CL_SUCCESS)
     {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to load virus database from %s", dbclamav);
@@ -93,7 +93,6 @@ static const char *set_clamav_engine(cmd_parms *cmd, void *cfg, const char *arg)
 
     if (strcasecmp(arg, "ON") == 0)
     {
-
         config->clamav_enabled = 1;
         initialize_clamav(config);
     }
@@ -187,18 +186,18 @@ static int log_mod(request_rec *r)
 
 static int mod_redsec_terminator_handler(request_rec *r)
 {
+    ap_set_content_type(r, "text/plain");
 
-    const char *content_type = apr_table_get(r->headers_in, "Content-Type");
+	const char *content_type = apr_table_get(r->headers_in, "Content-Type");
+
+	if (!content_type) {
+        content_type = "Content-Type header not found.";
+    }
 
     ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Content-Type found: %s", content_type);
     if (content_type)
     {
         r->content_type = apr_pstrdup(r->pool, content_type);
-    }
-    else
-    {
-        r->content_type = "text/html";
-        ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Content-Type not found, defaulting to text/html");
     }
 
     if (apr_strnatcasecmp(r->handler, "mod_redsec_terminator"))
@@ -217,7 +216,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
     if (config->clamav_enabled == 1)
     {
 
-        const char *file = "/home/redtech/developments/mscexample/testfile.txt";
+        const char *file = "/Users/janitrasatria/Development/mod_redsec_terminator/filejorok.txt";
         const char *virname;
 
         int ret = cl_scanfile(file, &virname, NULL, config->engine, &config->options);
@@ -275,6 +274,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
     {
         const char *prefixFormData = "multipart/form-data";
         keyValuePair *formData;
+
         if (apr_strnatcasecmp(r->content_type, "application/json") == 0)
         {
             formData = readJson(r);
@@ -294,6 +294,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
             {
                 json_object_object_add(body_obj, formData[i].key ? formData[i].key : "", json_object_new_string(formData[i].value ? formData[i].value : ""));
             }
+
         }
     }
     else
