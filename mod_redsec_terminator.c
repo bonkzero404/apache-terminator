@@ -182,7 +182,7 @@ static int send_to_tcp_socket(const char *url, const char *data)
     return 0;
 }
 
-static int log_mod(request_rec *r)
+static int modSecHandle(request_rec *r)
 {
 
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "data: %s", r->server->server_hostname);
@@ -254,8 +254,6 @@ static int mod_redsec_terminator_handler(request_rec *r)
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "mod_redsec_terminator: No query parameters");
     }
 
-    log_mod(r);
-
     if (r->method_number == M_POST || r->method_number == M_PUT || r->method_number == M_PATCH || r->method_number == M_DELETE || r->method_number == M_GET)
     {
         const char *prefixFormData = "multipart/form-data";
@@ -283,10 +281,10 @@ static int mod_redsec_terminator_handler(request_rec *r)
                     char file_path[512];
                     snprintf(file_path, sizeof(file_path), "%s/%s", config->path_temporary, formData[i].value);
 
-                    
-                    modSecVal = clamav_handle(r, (const char *)file_path, config->engine);
+                    modSecVal = clamav_handle(r, (const char *)file_path, formData[i].value, config->engine);
 
-                    if (modSecVal != NULL) {
+                    if (modSecVal != NULL)
+                    {
 
                         json_object *status_message_obj = json_object_new_object();
 
@@ -295,9 +293,6 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
                         json_object_array_add(upload_filter, status_message_obj);
                     }
-
-
-                    
                 }
             }
         }
@@ -311,6 +306,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
     {
         json_object_object_add(json_obj, "query_params", query_params_obj);
         json_object_object_add(json_obj, "body", body_obj);
+        json_object_object_add(json_obj, "upload_filter", upload_filter);
         if (strncmp(r->protocol, "HTTP/1.1", 8) == 0)
         {
             json_object_object_add(json_obj, "protocol", json_object_new_string("http"));
@@ -337,21 +333,51 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
     if (modSecVal != NULL)
     {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Processing ModSecurity Rules %s", modSecVal->message);
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Processing ModSecurity Rules %ld", json_object_array_length(upload_filter));
 
-        if (modSecVal->status != 200)
+        for (size_t i = 0; i < json_object_array_length(upload_filter); i++)
+        {
+            // Ambil objek pada index ke-i dari array
+            json_object *status_message_obj = json_object_array_get_idx(upload_filter, i);
+
+            // Ambil nilai status dan pesan dari objek
+            json_object *status_obj;
+            json_object *message_obj;
+
+            if (json_object_object_get_ex(status_message_obj, "status", &status_obj) &&
+                json_object_object_get_ex(status_message_obj, "message", &message_obj))
+            {
+
+                int status = json_object_get_int(status_obj);
+                const char *message = json_object_get_string(message_obj);
+
+                if (status != 200 && message != NULL)
+                {
+                    json_object_object_add(msc_obj, "status_msc", json_object_new_int(status));
+                    json_object_object_add(msc_obj, "message_msc", json_object_new_string(message));
+
+                    json_object_object_add(json_obj, "msc_report", msc_obj);
+
+                    const char *json_filter = json_object_to_json_string(json_obj);
+
+                    send_to_tcp_socket(url_socket, json_filter);
+
+                    free(modSecVal);
+
+                    return HTTP_FORBIDDEN;
+                }
+            }
+        }
+
+        if (modSecVal->status != 200 && modSecVal->message != NULL)
         {
 
             ap_rprintf(r, "STATUS: %d\n", modSecVal->status);
-        }
 
-        json_object_object_add(json_obj, "msc_report", msc_obj);
+            json_object_object_add(msc_obj, "status_msc", json_object_new_int(modSecVal->status));
 
-        json_object_object_add(msc_obj, "status_msc", json_object_new_int(modSecVal->status));
-
-        if (modSecVal->message != NULL)
-        {
             json_object_object_add(msc_obj, "message_msc", json_object_new_string(modSecVal->message));
+            json_object_object_add(json_obj, "msc_report", msc_obj);
             ap_rprintf(r, "MESSAGE: %s\n", modSecVal->message);
 
             const char *json_string = json_object_to_json_string(json_obj);
@@ -362,19 +388,17 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
             return HTTP_FORBIDDEN;
         }
-
     }
 
     ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Log Header Content Type: %s", apr_table_get(r->headers_in, "User-Agent"));
 
-    log_mod(r);
     send_to_tcp_socket(url_socket, json_str);
 
     // json_object_put(json_obj);
     // json_object_put(query_params_obj);
     // json_object_put(body_obj);
 
-    
+    free(modSecVal);
 
     return DECLINED;
 }
