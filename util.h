@@ -6,6 +6,7 @@
 typedef struct {
     const char *key;
     const char *value;
+    const char *type;
 } keyValuePair;
 
 typedef struct {
