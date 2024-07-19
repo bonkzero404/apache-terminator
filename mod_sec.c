@@ -64,21 +64,17 @@ void add_request_headers_to_transaction(Transaction *transaction, request_rec *r
     const apr_array_header_t *arr = apr_table_elts(r->headers_in);
     const apr_table_entry_t *elts = (const apr_table_entry_t *)arr->elts;
 
-    const char *prefixFormData = "multipart/form-data";
-
     for (int i = 0; i < arr->nelts; i++)
     {
-        if (strncmp(elts[i].val, prefixFormData, strlen(prefixFormData)) == 0) {
-            msc_add_request_header(transaction, "Content-Type", "application/x-www-form-urlencoded");
-        } else {
-
-            msc_add_request_header(transaction, elts[i].key, elts[i].val);
-        }
+        msc_add_request_header(transaction, elts[i].key, elts[i].val);
     }
 }
 
 void add_request_body(Transaction *transaction, json_object *json_obj)
 {
+
+
+
         const char *body = json_object_to_json_string(json_obj);
 
         msc_append_request_body(transaction, body, strlen(body));
@@ -116,7 +112,7 @@ ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj)
     }
 
     // Load local rules file
-    ret = msc_rules_add_file(rules, "/home/redtech/developments/mod_redsec_terminator/basic_rules.conf", &error);
+    ret = msc_rules_add_file(rules, "/Users/janitrasatria/Development/mod_redsec_terminator/basic_rules.conf", &error);
     if (ret < 0)
     {
         msc_cleanup(modsec);

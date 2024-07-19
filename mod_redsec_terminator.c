@@ -277,7 +277,11 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
         if (apr_strnatcasecmp(r->content_type, "application/json") == 0)
         {
-            formData = readJson(r);
+            // formData = readJson(r)->value;
+			// Read JSON value to form data
+			// call key json from readJson and assign to formData
+			formData = readJson(r);
+
         }
         else if (strncmp(r->content_type, prefixFormData, strlen(prefixFormData)) == 0)
         {
@@ -289,10 +293,15 @@ static int mod_redsec_terminator_handler(request_rec *r)
         }
         if (formData)
         {
-
             for (int i = 0; formData[i].key || formData[i].value; i++)
             {
-                json_object_object_add(body_obj, formData[i].key ? formData[i].key : "", json_object_new_string(formData[i].value ? formData[i].value : ""));
+				if (content_type && strncmp(content_type, "application/json", 16) == 0) {
+					json_object *json_obj = json_tokener_parse(formData[i].value);
+					json_object_object_add(body_obj, formData[i].key ? formData[i].key : NULL, json_obj);
+				} else {
+					json_object_object_add(body_obj, formData[i].key ? formData[i].key : "", json_object_new_string(formData[i].value ? formData[i].value : ""));
+				}
+                // json_object_object_add(body_obj, formData[i].key ? formData[i].key : "", json_object_new_string(formData[i].value ? formData[i].value : ""));
             }
 
         }

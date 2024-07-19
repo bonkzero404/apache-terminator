@@ -24,17 +24,22 @@ keyValuePair *readJson(request_rec *r)
             return NULL;  // Handle memory allocation failure
         }
 
-        int i = 0;
-        json_object_object_foreach(json_obj, key, val)
-        {
-            kvp[i].key = strdup(key);
-            kvp[i].value = strdup(json_object_get_string(val));
-            i++;
-        }
+		// json_obj to string
+		const char *json_str = json_object_to_json_string(json_obj);
+		kvp[0].key = strdup("json");
+		kvp[0].value = strdup(json_str);
 
-        // json_object_put(json_obj);
+        // int i = 0;
+        // json_object_object_foreach(json_obj, key, val)
+        // {
+        //     kvp[i].key = strdup(key);
+        //     kvp[i].value = strdup(json_object_get_string(val));
+        //     i++;
+        // }
 
-        kvp[i].key = NULL;
+        // // json_object_put(json_obj);
+
+        // kvp[i].key = NULL;
 
         return kvp;
     }
