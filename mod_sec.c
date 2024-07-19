@@ -120,7 +120,7 @@ ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj)
     }
 
     // Load local rules file
-    ret = msc_rules_add_file(rules, "/home/redtech/developments/mod_redsec_terminator/basic_rules.conf", &error);
+    ret = msc_rules_add_file(rules, "/Users/janitrasatria/Development/mod_redsec_terminator/basic_rules.conf", &error);
     if (ret < 0)
     {
         msc_cleanup(modsec);
@@ -136,7 +136,8 @@ ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj)
         return NULL;
     }
 
-    msc_process_connection(transaction, "127.0.0.1", 8282, "127.0.0.1", r->server->port);
+	// Change current host and port
+    msc_process_connection(transaction, r->useragent_ip, r->server->port, r->server->server_hostname, r->server->port);
     msc_process_uri(transaction, r->unparsed_uri, r->method, "HTTP/1.1");
     add_request_headers_to_transaction(transaction, r);
 
