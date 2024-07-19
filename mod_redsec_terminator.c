@@ -442,10 +442,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
 					free(modSecVal);
 
-					// if (page_forbidden_path) {
-					// 	handleResponse(r, page_forbidden_path);
-					// }
-
+					handleResponse(r, page_forbidden_path);
 
 					return OK;
 				}
