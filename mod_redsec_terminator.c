@@ -111,6 +111,7 @@ static const char *set_path_temporary(cmd_parms *cmd, void *cfg, const char *arg
     return NULL;
 }
 
+
 static int send_to_tcp_socket(const char *url, const char *data)
 {
     int sockfd, status;
@@ -178,9 +179,13 @@ static int send_to_tcp_socket(const char *url, const char *data)
         close(sockfd);
     }
 
+
+
     close(sockfd);
     return 0;
 }
+
+
 
 static int modSecHandle(request_rec *r)
 {
@@ -327,7 +332,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
     if (modSecVal == NULL)
     {
-        modSecVal = mod_sec_handler(r, body_obj);
+        modSecVal = mod_sec_handler(r, body_obj, url_socket);
         // free(modSecVal);
     }
 

@@ -10,7 +10,8 @@
 #include "modsecurity/intervention.h"
 #include "modsecurity/transaction.h"
 #include "modsecurity/rules_set.h"
+#include "tcp_helpers.h"
 
-ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj);
+ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj, const char *socket_url);
 
 #endif // MOD_SEC_H

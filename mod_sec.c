@@ -87,7 +87,8 @@ void add_request_body(Transaction *transaction, json_object *json_obj)
     msc_append_request_body(transaction, body, strlen(body));
 }
 
-ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj)
+
+ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj, const char *socket_url)
 {
     int ret;
     const char *error = NULL;
@@ -120,13 +121,27 @@ ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj)
     }
 
     // Load local rules file
-    ret = msc_rules_add_file(rules, "/home/redtech/developments/mod_redsec_terminator/basic_rules.conf", &error);
-    if (ret < 0)
-    {
-        msc_cleanup(modsec);
-        fprintf(stderr, "Failed to load local rules file: %s\n", error);
-        return NULL;
-    }
+	const char *rules_accept = receive_from_tcp_socket(socket_url);
+	if (rules_accept != NULL) {
+
+		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "mod_redsec_terminator: No query parameters %s", rules_accept);
+
+		ret = msc_rules_add(rules, rules_accept, &error);
+		if (ret < 0)
+		{
+			msc_cleanup(modsec);
+			fprintf(stderr, "Failed to load local rules file: %s\n", error);
+			return NULL;
+		}
+	}
+
+		// ret = msc_rules_add_file(rules, "/home/redtech/developments/mod_redsec_terminator/basic_rules.conf", &error);
+		// if (ret < 0)
+		// {
+		// 	msc_cleanup(modsec);
+		// 	fprintf(stderr, "Failed to load local rules file: %s\n", error);
+		// 	return NULL;
+		// }
     // Create new transaction
     transaction = msc_new_transaction(modsec, rules, NULL);
     if (!transaction)
