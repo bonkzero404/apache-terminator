@@ -12,166 +12,156 @@ char *trim_newline(char *str)
     return str;
 }
 
-keyValuePair *parse_multipart_form_data(request_rec *r)
+static int upload_file(const char *filepath, const char *content, size_t content_length)
 {
-    int rc;
-
-    const char *content_type = apr_table_get(r->headers_in, "Content-Type");
-
-    if ((rc = ap_setup_client_block(r, REQUEST_CHUNKED_ERROR)) != OK)
+    FILE *file = fopen(filepath, "wb");
+    if (!file)
     {
-        return NULL;
+        return -1; // File open error
+    }
+    fwrite(content, sizeof(char), content_length, file);
+    fclose(file);
+
+    if (chmod(filepath, 0666) != 0)
+    {
+        return -1; // Gagal mengatur izin
     }
 
-    const char *boundary = strstr(content_type, "boundary=");
-    if (!boundary)
+    return 0; // Success
+}
+
+keyValuePair *parse_multipart_form_data(request_rec *r, const char *path_temp, int clamav_status)
+{
+
+    apr_off_t size;
+    const char *buffer;
+    keyValuePair *kvp;
+
+    if (util_read(r, &buffer, &size) == OK)
     {
-        return NULL;
-    }
-
-    boundary += strlen("boundary=");
-    char *boundary_str = apr_pstrdup(r->pool, boundary);
-    char *end_boundary_str = apr_pstrcat(r->pool, "--", boundary_str, "--", NULL);
-
-    keyValuePair *kvp = NULL;
-    int kvp_count = 0;
-
-    if (ap_should_client_block(r))
-    {
-        char argsbuffer[HUGE_STRING_LEN];
-        int len_read;
-        apr_array_header_t *pairs = apr_array_make(r->pool, 10, sizeof(keyValuePair));
-
-        while ((len_read = ap_get_client_block(r, argsbuffer, sizeof(argsbuffer))) > 0)
+        const char *boundary = strstr(r->content_type, "boundary=");
+        if (!boundary)
         {
-            char *part_start = argsbuffer;
-            while ((part_start = strstr(part_start, boundary_str)))
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "No boundary found in Content-Type");
+            return NULL;
+        }
+        boundary += 9; // Move past "boundary="
+        
+        const char *boundary_str = apr_pstrcat(r->pool, "--", boundary, NULL);
+        
+        kvp = apr_pcalloc(r->pool, sizeof(keyValuePair) * (size + 1));
+        if (kvp == NULL)
+        {
+            return NULL; // Handle memory allocation failure
+        }
+
+        const char *part_start = strstr(buffer, boundary_str);
+        int i = 0;
+        while ((part_start = strstr(part_start, boundary_str)))
+        {
+            part_start += strlen(boundary_str);
+            if (*part_start == '-' && *(part_start + 1) == '-')
             {
+                break; // End of multipart data
+            }
 
-                part_start += strlen(boundary_str);
+            part_start += 2; // Skip the boundary line break
 
-                if (*part_start == '-' && *(part_start + 1) == '-')
+            const char *part_end = strstr(part_start, boundary_str);
+            if (!part_end)
+            {
+                part_end = buffer + size;
+            }
+            else
+            {
+                part_end -= 2; // Remove the trailing line break before boundary
+            }
+
+            const char *header_end = strstr(part_start, "\r\n\r\n");
+            if (header_end)
+            {
+                char *header_end_modifiable = (char *)header_end;
+                *header_end_modifiable = '\0';
+                const char *body_start = header_end + 4;
+
+                if (body_start >= part_end)
                 {
-                    break; // End of multipart data
+                    break;
                 }
 
-                part_start += 2; // Skip the boundary line break
-
-                char *part_end = strstr(part_start, boundary_str);
-
-                if (!part_end)
+                const char *content_disposition = strstr(part_start, "Content-Disposition:");
+                const char *content_type_start = strstr(part_start, "Content-Type:");
+                if (content_disposition)
                 {
-                    part_end = argsbuffer + len_read;
-                }
-                else
-                {
-                    part_end -= 2; // Remove the trailing line break before boundary
-                }
+                    const char *name_start = strstr(content_disposition, "name=\"");
+                    const char *namefile = strstr(content_disposition, "filename=\"");
 
-                // *part_end = '\0';
-
-                char *header_end = strstr(part_start, "\r\n\r\n");
-
-                if (header_end)
-                {
-                    *header_end = '\0';
-                    char *body_start = header_end + 4;
-
-                    if (body_start >= part_end)
+                    if (name_start)
                     {
-                        break;
-                    }
+                        name_start += strlen("name=\"");
+                        const char *name_end = strstr(name_start, "\"");
 
-                    char *content_disposition = strstr(part_start, "Content-Disposition:");
-                    char *content_type_start = strstr(part_start, "Content-Type:");
-                    if (content_disposition)
-                    {
-                        char *name_start = strstr(content_disposition, "name=\"");
-                        char *namefile = strstr(content_disposition, "filename=\"");
-
-                        if (name_start)
+                        if (content_type_start != NULL && namefile != NULL)
                         {
+                            namefile += strlen("filename=\"");
+                            const char *file_end = strstr(namefile, "\"");
 
-                            name_start += strlen("name=\"");
-
-                            char *name_end = strstr(name_start, "\"");
-
-
-                            if (content_type_start != NULL && namefile != NULL)
+                            if (file_end)
                             {
+                                char *file_end_modifiable = (char *)file_end;
+                                *file_end_modifiable = '\0';
+                                char *name_end_modifiable = (char *)name_end;
+                                *name_end_modifiable = '\0';
 
-                                namefile += strlen("filename=\"");
-                                char *file_end = strstr(namefile, "\"");
+                                char *key = apr_pstrdup(r->pool, name_start);
+                                char *value = apr_pstrdup(r->pool, namefile);
+                                value = trim_newline(value);
 
-                                if (file_end)
+                                if (clamav_status == 1)
                                 {
-                                    *file_end = '\0';
-                                    *name_end = '\0';
-                                    char *key = apr_pstrdup(r->pool, name_start);
-                                    char *value = apr_pstrdup(r->pool, namefile);
-
-                                    value = trim_newline(value);
-
-                                    keyValuePair *pair = (keyValuePair *)apr_array_push(pairs);
-                                    pair->key = key;
-                                    pair->value = value;
-
-                                    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "mod_redsec_terminator: Read key-value pair: %s = %s", key, value);
+                                    char file_path[512];
+                                    snprintf(file_path, sizeof(file_path), "%s/%s", path_temp, value);
+                                    if (upload_file(file_path, body_start, part_end - body_start) == 0)
+                                    {
+                                        ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "File uploaded successfully: %s\n", file_path);
+                                    }
+                                    else
+                                    {
+                                        ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Failed to upload successfully: %s\n", file_path);
+                                    }
                                 }
+
+                                kvp[i].key = key;
+                                kvp[i].value = value;
+                                kvp[i].type = strdup("file");
                             }
-                            else
+                        }
+                        else
+                        {
+                            if (name_end)
                             {
+                                char *name_end_modifiable = (char *)name_end;
+                                *name_end_modifiable = '\0';
+                                char *key = apr_pstrdup(r->pool, name_start);
+                                char *value = apr_pstrndup(r->pool, body_start, part_end - body_start);
+                                value = trim_newline(value);
 
-
-                                if (name_end)
-                                {
-                                    *name_end = '\0';
-                                    char *key = apr_pstrdup(r->pool, name_start);
-
-                                    char *value = apr_pstrndup(r->pool, body_start, part_end - body_start);
-                                    value = trim_newline(value);
-
-                                    keyValuePair *pair = (keyValuePair *)apr_array_push(pairs);
-                                    pair->key = key;
-                                    pair->value = value;
-
-                                    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "mod_redsec_terminator: Read key-value pair: %s = %s", key, value);
-                                }
+                                kvp[i].key = key;
+                                kvp[i].value = value;
+                                kvp[i].type = strdup("text");
                             }
                         }
                     }
-
-                    // if (content_type_start)
-                    // {
-                    //     content_type_start += strlen("Content-Type:");
-                    //     while (*content_type_start == ' ')
-                    //     {
-                    //         content_type_start++;
-                    //     }
-                    //     char *content_type_end = strstr(content_type_start, "\r\n");
-
-                    //     ap_rprintf(r, "test: %s\n", content_type_end);
-
-                    //     if (content_type_end)
-                    //     {
-                    //         *content_type_end = '\0';
-                    //         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "mod_redsec_terminator: Content-Type: %s", content_type_start);
-                    //     }
-                    // }
                 }
-
-                part_start = part_end;
             }
+
+            part_start = part_end;
+            i++;
         }
 
-        // Output pairs to the response
-        kvp = apr_pcalloc(r->pool, sizeof(keyValuePair) * (pairs->nelts + 1));
-        for (int i = 0; i < pairs->nelts; i++)
-        {
-            keyValuePair *pair = &((keyValuePair *)pairs->elts)[i];
-            kvp[i].key = pair->key;
-            kvp[i].value = pair->value;
-        }
+        kvp[i].key = NULL;
     }
+
+
     return kvp;
 }
