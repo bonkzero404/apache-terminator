@@ -210,18 +210,6 @@ static int send_to_tcp_socket(request_rec *r, const char *url, const char *data)
 		close(sockfd);
 	}
 
-	char recv_buffer[1024];
-	int bytes_recv = recv(sockfd, recv_buffer, sizeof(recv_buffer) - 1, 0);
-
-	ap_log_error(APLOG_MARK, APLOG_INFO, 0, NULL, "mod_redsec_terminator: Received data: %d", bytes_recv);
-	if (bytes_recv == -1)
-	{
-		ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Error received data");
-		close(sockfd);
-	}
-	recv_buffer[bytes_recv] = '\0'; // Null-terminate the received data
-	ap_rprintf(r, "mod_redsec_terminator: Received data: %s\n", recv_buffer);
-
 
 	close(sockfd);
 	return 0;
