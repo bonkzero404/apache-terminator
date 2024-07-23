@@ -87,7 +87,7 @@ void add_request_body(Transaction *transaction, json_object *json_obj)
 	msc_append_request_body(transaction, body, strlen(body));
 }
 
-ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj, const char *rules_path)
+ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj, const char *rules_path, const char *socket_url)
 {
 	int ret;
 	const char *error = NULL;
@@ -119,28 +119,63 @@ ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj, const ch
 	}
 
 	// Load local rules file
-	// const char *rules_accept = receive_from_tcp_socket(socket_url);
-	// if (rules_accept != NULL)
-	// {
-
-	// 	ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "mod_redsec_terminator: No query parameters %s", rules_accept);
-
-	// 	ret = msc_rules_add(rules, rules_accept, &error);
-	// 	if (ret < 0)
-	// 	{
-	// 		msc_cleanup(modsec);
-	// 		fprintf(stderr, "Failed to load local rules file: %s\n", error);
-	// 		return NULL;
-	// 	}
-	// }
-
-	ret = msc_rules_add_file(rules, rules_path, &error);
-	if (ret < 0)
+	char *rules_accept = handle_tcp_receipt(r, socket_url);
+	if (rules_accept != NULL)
 	{
-		msc_cleanup(modsec);
-		fprintf(stderr, "Failed to load local rules file: %s\n", error);
-		return NULL;
+
+		json_object *parsed_json;
+		json_object *ruleObj;
+
+		// Parse the JSON string
+		parsed_json = json_tokener_parse(rules_accept);
+
+		if (parsed_json == NULL)
+		{
+			ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Failed to parse JSON");
+			msc_cleanup(modsec);
+			return NULL;
+		}
+
+		// Check if 'config_rules' key exists and get its value
+		if (json_object_object_get_ex(parsed_json, "config_rules", &ruleObj))
+		{
+			// Convert JSON object to string and print it
+			const char *rules_string = json_object_get_string(ruleObj);
+
+
+			// Add rules
+			ret = msc_rules_add(rules, rules_string, &error);
+
+
+			if (ret < 0)
+			{
+				ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Failed to add rules: %s", error);
+				msc_cleanup(modsec);
+				return NULL;
+			}
+
+		}
+		else
+		{
+			ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Key 'config_rules' not found in JSON");
+			msc_cleanup(modsec);
+			return NULL;
+		}
+
+		json_object_put(parsed_json);
 	}
+	else
+	{
+
+		ret = msc_rules_add_file(rules, rules_path, &error);
+		if (ret < 0)
+		{
+			msc_cleanup(modsec);
+			ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Failed to get file : %s", error);
+			return NULL;
+		}
+	}
+
 	// Create new transaction
 	transaction = msc_new_transaction(modsec, rules, NULL);
 	if (!transaction)

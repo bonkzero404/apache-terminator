@@ -1,6 +1,6 @@
 MODULE_NAME = mod_redsec_terminator
 
-SRC_FILES = mod_redsec_terminator.c util.c body_reader.c json_reader.c form_reader.c mod_sec.c clamav_sec.c
+SRC_FILES = mod_redsec_terminator.c util.c body_reader.c json_reader.c form_reader.c mod_sec.c clamav_sec.c tcp_handle.c
 
 OUTPUT_FILE = $(MODULE_NAME).so
 

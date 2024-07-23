@@ -25,6 +25,7 @@ typedef struct
 	const char *socket_url;
 	const char *rule_path;
 	const char *page_forbidden_path;
+	const char *clamav_db_path;
 	const char *path_temporary;
 	int clamav_enabled;
 	struct cl_engine *engine;
@@ -36,13 +37,14 @@ static void *create_mod_redsec_terminator_config(apr_pool_t *p, char *dir)
 	config->socket_url = NULL; // Initialize socket_url to NULL
 	config->path_temporary = NULL;
 	config->rule_path = NULL;
+	config->clamav_db_path = NULL;
 	config->page_forbidden_path = NULL;
 	config->clamav_enabled = 0;
 	config->engine = NULL;
 	return (void *)config;
 }
 
-static int initialize_clamav(mod_redsec_terminator_config *config)
+static int initialize_clamav(mod_redsec_terminator_config *config, const char *path_db)
 {
 	// Initialize ClamAV engine
 	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "failed load %d\n", config->clamav_enabled);
@@ -61,7 +63,10 @@ static int initialize_clamav(mod_redsec_terminator_config *config)
 	}
 
 	// Load virus database
-	const char *dbclamav = "/opt/homebrew/var/lib/clamav";
+	const char *dbclamav = path_db ? path_db : cl_retdbdir();
+
+
+
 	if (cl_load(dbclamav, config->engine, NULL, CL_DB_STDOPT) != CL_SUCCESS)
 	{
 		ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to load virus database from %s", dbclamav);
@@ -77,6 +82,9 @@ static int initialize_clamav(mod_redsec_terminator_config *config)
 	return 0;
 }
 
+
+// config
+
 static const char *set_socket_url(cmd_parms *cmd, void *cfg, const char *arg)
 {
 	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "config set %s", arg);
@@ -86,7 +94,7 @@ static const char *set_socket_url(cmd_parms *cmd, void *cfg, const char *arg)
 	return NULL;
 }
 
-static const char *set_clamav_engine(cmd_parms *cmd, void *cfg, const char *arg)
+static const char *set_clamav_engine(cmd_parms *cmd, void *cfg, const char *arg, const char *arg2)
 {
 	mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)cfg;
 
@@ -95,7 +103,8 @@ static const char *set_clamav_engine(cmd_parms *cmd, void *cfg, const char *arg)
 	if (strcasecmp(arg, "ON") == 0)
 	{
 		config->clamav_enabled = 1;
-		initialize_clamav(config);
+
+		initialize_clamav(config, arg2);
 	}
 	else if (strcasecmp(arg, "OFF") == 0)
 	{
@@ -132,7 +141,9 @@ static const char *set_page_forbidden_path(cmd_parms *cmd, void *cfg, const char
 	return NULL;
 }
 
-static int send_to_tcp_socket(const char *url, const char *data)
+// TCP
+
+static int send_to_tcp_socket(request_rec *r, const char *url, const char *data)
 {
 	int sockfd, status;
 	struct addrinfo hints, *res, *p;
@@ -199,10 +210,24 @@ static int send_to_tcp_socket(const char *url, const char *data)
 		close(sockfd);
 	}
 
+	char recv_buffer[1024];
+	int bytes_recv = recv(sockfd, recv_buffer, sizeof(recv_buffer) - 1, 0);
+
+	ap_log_error(APLOG_MARK, APLOG_INFO, 0, NULL, "mod_redsec_terminator: Received data: %d", bytes_recv);
+	if (bytes_recv == -1)
+	{
+		ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Error received data");
+		close(sockfd);
+	}
+	recv_buffer[bytes_recv] = '\0'; // Null-terminate the received data
+	ap_rprintf(r, "mod_redsec_terminator: Received data: %s\n", recv_buffer);
+
+
 	close(sockfd);
 	return 0;
 }
 
+// modSec
 static int modSecHandle(request_rec *r)
 {
 
@@ -212,6 +237,7 @@ static int modSecHandle(request_rec *r)
 	return OK;
 }
 
+// RESPONSE modSec
 static void handleResponse(request_rec *r, const char *path_url)
 {
     ap_set_content_type(r, "text/html");
@@ -252,7 +278,7 @@ static void handleResponse(request_rec *r, const char *path_url)
     apr_file_close(file);
 }
 
-
+// Handler
 static int mod_redsec_terminator_handler(request_rec *r)
 {
 	ap_set_content_type(r, "text/plain");
@@ -403,7 +429,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
 	if (modSecVal == NULL)
 	{
-		modSecVal = mod_sec_handler(r, body_obj, rule_path);
+		modSecVal = mod_sec_handler(r, body_obj, rule_path, url_socket);
 		// free(modSecVal);
 	}
 
@@ -436,7 +462,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
 					const char *json_filter = json_object_to_json_string(json_obj);
 
-					send_to_tcp_socket(url_socket, json_filter);
+					send_to_tcp_socket(r, url_socket, json_filter);
 
 					// Send custom HTML response from file
 
@@ -460,7 +486,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
 			const char *json_string = json_object_to_json_string(json_obj);
 
-			send_to_tcp_socket(url_socket, json_string);
+			send_to_tcp_socket(r, url_socket, json_string);
 
 			free(modSecVal);
 			handleResponse(r, page_forbidden_path);
@@ -471,7 +497,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
 		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Log Header Content Type: %s", apr_table_get(r->headers_in, "User-Agent"));
 
-		send_to_tcp_socket(url_socket, json_str);
+		send_to_tcp_socket(r, url_socket, json_str);
 
 		// json_object_put(json_obj);
 		// json_object_put(query_params_obj);
@@ -491,7 +517,7 @@ static void mod_redsec_terminator_register_hooks(apr_pool_t *p)
 static const command_rec mod_redsec_terminator_cmds[] = {
 	AP_INIT_TAKE1("RedSecTerminatorURLSocket", set_socket_url, NULL, RSRC_CONF,
 				  "Specify the custom socket URL for data transmission"),
-	AP_INIT_TAKE1("RedSecTerminatorClamAVengine", set_clamav_engine, NULL, RSRC_CONF,
+	AP_INIT_TAKE12("RedSecTerminatorClamAVengine", set_clamav_engine, NULL, RSRC_CONF,
 				  "Enable or disable ClamAV engine (ON/OFF)"),
 	AP_INIT_TAKE1("TemporaryFileScan", set_path_temporary, NULL, RSRC_CONF,
 				  "Enable or disable ClamAV engine (ON/OFF)"),
