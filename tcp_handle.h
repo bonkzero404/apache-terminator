@@ -10,7 +10,12 @@
 #include <httpd.h>
 #include <http_log.h>
 #include <apr_strings.h>
+#include "json-c/json.h"
+#include "util.h"
 
-char *handle_tcp_receipt(request_rec *r, const char *urls);
+
+char *handle_tcp_receipt(const char *urls);
+
+TCPValueConfig *handle_config_receipt(const char *urls);
 
 #endif // TCP_HANDLE_H

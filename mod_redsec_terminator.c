@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <clamav.h>
 #include "clamav_sec.h"
+#include "tcp_handle.h"
 
 module AP_MODULE_DECLARE_DATA mod_redsec_terminator_module;
 
@@ -44,7 +45,7 @@ static void *create_mod_redsec_terminator_config(apr_pool_t *p, char *dir)
 	return (void *)config;
 }
 
-static int initialize_clamav(mod_redsec_terminator_config *config, const char *path_db)
+static int initialize_clamav(mod_redsec_terminator_config *config)
 {
 	// Initialize ClamAV engine
 	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "failed load %d\n", config->clamav_enabled);
@@ -63,9 +64,7 @@ static int initialize_clamav(mod_redsec_terminator_config *config, const char *p
 	}
 
 	// Load virus database
-	const char *dbclamav = path_db ? path_db : cl_retdbdir();
-
-
+	const char *dbclamav = config->clamav_db_path ? config->clamav_db_path : cl_retdbdir();
 
 	if (cl_load(dbclamav, config->engine, NULL, CL_DB_STDOPT) != CL_SUCCESS)
 	{
@@ -82,7 +81,6 @@ static int initialize_clamav(mod_redsec_terminator_config *config, const char *p
 	return 0;
 }
 
-
 // config
 
 static const char *set_socket_url(cmd_parms *cmd, void *cfg, const char *arg)
@@ -91,53 +89,23 @@ static const char *set_socket_url(cmd_parms *cmd, void *cfg, const char *arg)
 
 	mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)cfg;
 	config->socket_url = apr_pstrdup(cmd->pool, arg);
-	return NULL;
-}
 
-static const char *set_clamav_engine(cmd_parms *cmd, void *cfg, const char *arg, const char *arg2)
-{
-	mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)cfg;
+	TCPValueConfig *rules_accept = handle_config_receipt(config->socket_url);
 
-	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "config set %s", arg);
-
-	if (strcasecmp(arg, "ON") == 0)
+	if (rules_accept != NULL)
 	{
-		config->clamav_enabled = 1;
+		config->page_forbidden_path = apr_pstrdup(cmd->pool, rules_accept->custom_mod_sec_page);
+		config->rule_path = apr_pstrdup(cmd->pool, rules_accept->rules_filename);
+		config->path_temporary = apr_pstrdup(cmd->pool, rules_accept->main_directory);
+		config->clamav_enabled = rules_accept->clamav_status;
 
-		initialize_clamav(config, arg2);
-	}
-	else if (strcasecmp(arg, "OFF") == 0)
-	{
-		config->clamav_enabled = 0;
+		if (config->clamav_enabled == 1)
+		{
+			config->clamav_db_path = apr_pstrdup(cmd->pool, rules_accept->clamav_DB);
+			initialize_clamav(config);
+		}
 	}
 
-	return NULL;
-}
-
-static const char *set_path_temporary(cmd_parms *cmd, void *cfg, const char *arg)
-{
-	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "config set %s", arg);
-
-	mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)cfg;
-	config->path_temporary = apr_pstrdup(cmd->pool, arg);
-	return NULL;
-}
-
-static const char *set_rule_path(cmd_parms *cmd, void *cfg, const char *arg)
-{
-	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "config set %s", arg);
-
-	mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)cfg;
-	config->rule_path = apr_pstrdup(cmd->pool, arg);
-	return NULL;
-}
-
-static const char *set_page_forbidden_path(cmd_parms *cmd, void *cfg, const char *arg)
-{
-	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "config set %s", arg);
-
-	mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)cfg;
-	config->page_forbidden_path = apr_pstrdup(cmd->pool, arg);
 	return NULL;
 }
 
@@ -210,7 +178,6 @@ static int send_to_tcp_socket(request_rec *r, const char *url, const char *data)
 		close(sockfd);
 	}
 
-
 	close(sockfd);
 	return 0;
 }
@@ -228,42 +195,42 @@ static int modSecHandle(request_rec *r)
 // RESPONSE modSec
 static void handleResponse(request_rec *r, const char *path_url)
 {
-    ap_set_content_type(r, "text/html");
+	ap_set_content_type(r, "text/html");
 
-    apr_file_t *file;
-    apr_status_t rv = apr_file_open(&file, path_url, APR_READ, APR_OS_DEFAULT, r->pool);
+	apr_file_t *file;
+	apr_status_t rv = apr_file_open(&file, path_url, APR_READ, APR_OS_DEFAULT, r->pool);
 
-    if (rv != APR_SUCCESS)
-    {
-        ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Failed to open file: %s", path_url);
-        ap_rputs("<html><body><h1>Access Forbidden</h1><p>Your request was denied by the security rules.</p></body></html>", r);
-        return;
-    }
+	if (rv != APR_SUCCESS)
+	{
+		ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Failed to open file: %s", path_url);
+		ap_rputs("<html><body><h1>Access Forbidden</h1><p>Your request was denied by the security rules.</p></body></html>", r);
+		return;
+	}
 
-    char buffer[8192];
-    apr_size_t bytes_read;
+	char buffer[8192];
+	apr_size_t bytes_read;
 
-    while (1)
-    {
-        apr_size_t buffer_size = sizeof(buffer);
-        rv = apr_file_read(file, buffer, &buffer_size);
+	while (1)
+	{
+		apr_size_t buffer_size = sizeof(buffer);
+		rv = apr_file_read(file, buffer, &buffer_size);
 
-        if (rv == APR_EOF)
-        {
-            break;
-        }
-        else if (rv != APR_SUCCESS)
-        {
-            ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error reading file: %s", path_url);
-            ap_rputs("<html><body><h1>Internal Server Error</h1><p>Unable to read file.</p></body></html>", r);
-            apr_file_close(file);
-            return;
-        }
+		if (rv == APR_EOF)
+		{
+			break;
+		}
+		else if (rv != APR_SUCCESS)
+		{
+			ap_log_rerror(APLOG_MARK, APLOG_ERR, rv, r, "Error reading file: %s", path_url);
+			ap_rputs("<html><body><h1>Internal Server Error</h1><p>Unable to read file.</p></body></html>", r);
+			apr_file_close(file);
+			return;
+		}
 
-        ap_rwrite(buffer, buffer_size, r);
-    }
+		ap_rwrite(buffer, buffer_size, r);
+	}
 
-    apr_file_close(file);
+	apr_file_close(file);
 }
 
 // Handler
@@ -295,6 +262,7 @@ static int mod_redsec_terminator_handler(request_rec *r)
 		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "mod_redsec_terminator: Configuration not initialized properly");
 		return HTTP_INTERNAL_SERVER_ERROR;
 	}
+
 	const char *url_socket = config->socket_url;
 	const char *rule_path = config->rule_path;
 	const char *page_forbidden_path = config->page_forbidden_path;
@@ -387,10 +355,6 @@ static int mod_redsec_terminator_handler(request_rec *r)
 			}
 		}
 	}
-	else
-	{
-		ap_rprintf(r, "Method is empty %d\n", M_POST);
-	}
 
 	if (json_obj != NULL)
 	{
@@ -466,7 +430,6 @@ static int mod_redsec_terminator_handler(request_rec *r)
 		if (modSecVal->status != 200 && modSecVal->message != NULL)
 		{
 
-
 			json_object_object_add(msc_obj, "status_msc", json_object_new_int(modSecVal->status));
 
 			json_object_object_add(msc_obj, "message_msc", json_object_new_string(modSecVal->message));
@@ -479,22 +442,17 @@ static int mod_redsec_terminator_handler(request_rec *r)
 			free(modSecVal);
 			handleResponse(r, page_forbidden_path);
 
-
 			return OK;
 		}
 
 		ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "Log Header Content Type: %s", apr_table_get(r->headers_in, "User-Agent"));
-
-		send_to_tcp_socket(r, url_socket, json_str);
-
-		// json_object_put(json_obj);
-		// json_object_put(query_params_obj);
-		// json_object_put(body_obj);
-
 		free(modSecVal);
-
-		return DECLINED;
 	}
+
+	send_to_tcp_socket(r, url_socket, json_str);
+
+
+	return DECLINED;
 }
 
 static void mod_redsec_terminator_register_hooks(apr_pool_t *p)
@@ -505,14 +463,7 @@ static void mod_redsec_terminator_register_hooks(apr_pool_t *p)
 static const command_rec mod_redsec_terminator_cmds[] = {
 	AP_INIT_TAKE1("RedSecTerminatorURLSocket", set_socket_url, NULL, RSRC_CONF,
 				  "Specify the custom socket URL for data transmission"),
-	AP_INIT_TAKE12("RedSecTerminatorClamAVengine", set_clamav_engine, NULL, RSRC_CONF,
-				  "Enable or disable ClamAV engine (ON/OFF)"),
-	AP_INIT_TAKE1("TemporaryFileScan", set_path_temporary, NULL, RSRC_CONF,
-				  "Enable or disable ClamAV engine (ON/OFF)"),
-	AP_INIT_TAKE1("RedSecTerminatorSecRulePath", set_rule_path, NULL, RSRC_CONF,
-				  "Setting Path Rule for module security"),
-	AP_INIT_TAKE1("RedSecTerminator403PagePath", set_page_forbidden_path, NULL, RSRC_CONF,
-				  "Setting Path Page 403 for intercept forbidden"),{NULL}};
+	{NULL}};
 
 module AP_MODULE_DECLARE_DATA mod_redsec_terminator_module = {
 	STANDARD20_MODULE_STUFF,

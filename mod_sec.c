@@ -119,53 +119,8 @@ ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj, const ch
 	}
 
 	// Load local rules file
-	char *rules_accept = handle_tcp_receipt(r, socket_url);
-	if (rules_accept != NULL)
-	{
 
-		json_object *parsed_json;
-		json_object *ruleObj;
-
-		// Parse the JSON string
-		parsed_json = json_tokener_parse(rules_accept);
-
-		if (parsed_json == NULL)
-		{
-			ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Failed to parse JSON");
-			msc_cleanup(modsec);
-			return NULL;
-		}
-
-		// Check if 'config_rules' key exists and get its value
-		if (json_object_object_get_ex(parsed_json, "config_rules", &ruleObj))
-		{
-			// Convert JSON object to string and print it
-			const char *rules_string = json_object_get_string(ruleObj);
-
-
-			// Add rules
-			ret = msc_rules_add(rules, rules_string, &error);
-
-
-			if (ret < 0)
-			{
-				ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Failed to add rules: %s", error);
-				msc_cleanup(modsec);
-				return NULL;
-			}
-
-		}
-		else
-		{
-			ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Key 'config_rules' not found in JSON");
-			msc_cleanup(modsec);
-			return NULL;
-		}
-
-		json_object_put(parsed_json);
-	}
-	else
-	{
+	if (rules_path) {
 
 		ret = msc_rules_add_file(rules, rules_path, &error);
 		if (ret < 0)
@@ -175,6 +130,7 @@ ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj, const ch
 			return NULL;
 		}
 	}
+
 
 	// Create new transaction
 	transaction = msc_new_transaction(modsec, rules, NULL);
