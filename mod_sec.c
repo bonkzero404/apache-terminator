@@ -6,7 +6,7 @@ static ModSecValuePair *process_intervention(request_rec *r, Transaction *trans)
 	ModSecValuePair *msvp = malloc(sizeof(ModSecValuePair)); // Allocate memory for ModSecValuePair
 	if (!msvp)
 	{
-		fprintf(stderr, "Failed to allocate memory for ModSecValuePair\n");
+		ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Failed to allocate memory for ModSecValuePair");
 		return NULL;
 	}
 	msvp->message = NULL;
@@ -37,13 +37,13 @@ static ModSecValuePair *process_intervention(request_rec *r, Transaction *trans)
 				{
 					strncpy(msg, msgStart, msgEnd - msgStart);
 					msg[msgEnd - msgStart] = '\0';
-					printf("Detected message: %s\n", msg);
+					ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Detected message: %s", msg);
 
 					msvp->message = msg;
 				}
 				else
 				{
-					fprintf(stderr, "Failed to allocate memory for message\n");
+					ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Failed to allocate memory for message");
 				}
 			}
 		}
@@ -101,8 +101,7 @@ ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj, const ch
 	modsec = msc_init();
 	if (!modsec)
 	{
-
-		fprintf(stderr, "Failed to initialize ModSecurity\n");
+		ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Failed to initialize ModSecurity");
 		return NULL;
 	}
 
@@ -113,7 +112,7 @@ ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj, const ch
 	rules = msc_create_rules_set();
 	if (!rules)
 	{
-		fprintf(stderr, "Failed to create rules set\n");
+		ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Failed to create rules set");
 		msc_cleanup(modsec);
 		return NULL;
 	}
@@ -136,20 +135,18 @@ ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj, const ch
 	transaction = msc_new_transaction(modsec, rules, NULL);
 	if (!transaction)
 	{
-		fprintf(stderr, "Failed to create new transaction\n");
+		ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Failed to create new transaction");
 		msc_cleanup(modsec);
 		return NULL;
 	}
 
-	msc_process_connection(transaction, "127.0.0.1", 8282, "127.0.0.1", r->server->port);
+	// msc_process_connection(transaction, "127.0.0.1", 8282, "127.0.0.1", r->server->port);
+	msc_process_connection(transaction, r->hostname, r->useragent_addr->port, r->server->server_hostname, r->server->port);
 	msc_process_uri(transaction, r->unparsed_uri, r->method, "HTTP/1.1");
 	add_request_headers_to_transaction(transaction, r);
 
-	// ap_rprintf(r, "asede %d\n", json_object_object_length(json_obj));
-
 	if (json_object_object_length(json_obj) != 0)
 	{
-
 		add_request_body(transaction, json_obj);
 	}
 
