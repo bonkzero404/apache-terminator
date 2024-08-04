@@ -106,7 +106,7 @@ ModSecValuePair *mod_sec_handler(request_rec *r, json_object *json_obj, const ch
 	}
 
 	// Set ModSecurity connector info
-	msc_set_connector_info(modsec, "ModSecurity-test v0.0.1-alpha (Simple example on how to use ModSecurity API");
+	msc_set_connector_info(modsec, "ModSec Connector v0.1");
 
 	// Create rules set
 	rules = msc_create_rules_set();
