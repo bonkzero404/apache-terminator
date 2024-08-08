@@ -1,16 +1,22 @@
 #include "util.h"
 
-int util_read(request_rec *r, const char **rbuf, apr_off_t *size) {
+int util_read(request_rec *r, const char **rbuf, apr_off_t *size)
+{
+    /*~~~~~~~~*/
     int rc = OK;
+    /*~~~~~~~~*/
 
     if((rc = ap_setup_client_block(r, REQUEST_CHUNKED_ERROR))) {
         return(rc);
     }
 
     if(ap_should_client_block(r)) {
-        char argsbuffer[HUGE_STRING_LEN];
-        apr_off_t rsize, len_read, rpos = 0;
-        apr_off_t length = r->remaining;
+
+        /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+        char        argsbuffer[HUGE_STRING_LEN];
+        apr_off_t   rsize, len_read, rpos = 0;
+        apr_off_t 	length = r->remaining;
+        /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 
         *rbuf = (const char *) apr_pcalloc(r->pool, (apr_size_t) (length + 1));
         *size = length;
