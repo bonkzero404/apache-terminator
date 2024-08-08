@@ -9,6 +9,8 @@
 #include "form_reader.h"
 #include "http_log.h"
 #include "mod_sec.h"
+#include "seclang.h"
+#include "http_client.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -21,8 +23,16 @@
 
 module AP_MODULE_DECLARE_DATA mod_redsec_terminator_module;
 
-typedef struct
-{
+#define BUFFER_SIZE 102400
+
+typedef struct {
+	int config_remote;
+	const char *rule_remote_url;
+	const char *rule_remote_unicode;
+	const char *sec_rule;
+	const char *sec_rule_unicode;
+
+	const char *config_path;
 	const char *socket_url;
 	const char *rule_path;
 	const char *page_forbidden_path;
@@ -32,33 +42,62 @@ typedef struct
 	struct cl_engine *engine;
 } mod_redsec_terminator_config;
 
+int check_directory_exists(const char *path) {
+    struct stat info;
+
+    if (stat(path, &info) != 0) {
+        return 0;
+    } else if (info.st_mode & S_IFDIR) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+int write_seclang_to_file(const char *filename, char *seclang_d) {
+    FILE *file = fopen(filename, "w");
+    if (file == NULL) {
+        perror("Error opening file");
+        return -1;
+    }
+
+	fprintf(file, "%s", seclang_d);
+    fclose(file);
+
+	return 0;
+}
+
+char *join_strings(apr_pool_t *pool, const char *str1, const char *str2) {
+    char *result = NULL;
+    if (asprintf(&result, "%s%s", str1, str2) == -1) {
+        return NULL;
+    }
+    return apr_pstrdup(pool, result);
+}
+
 static void *create_mod_redsec_terminator_config(apr_pool_t *p, char *dir)
 {
 	mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)apr_pcalloc(p, sizeof(mod_redsec_terminator_config));
-	config->socket_url = NULL; // Initialize socket_url to NULL
+	config->config_path = NULL;
+	config->socket_url = NULL;
 	config->path_temporary = NULL;
 	config->rule_path = NULL;
 	config->clamav_db_path = NULL;
 	config->page_forbidden_path = NULL;
 	config->clamav_enabled = 0;
 	config->engine = NULL;
+
 	return (void *)config;
 }
 
-static int initialize_clamav(mod_redsec_terminator_config *config)
-{
-	// Initialize ClamAV engine
-	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "failed load %d\n", config->clamav_enabled);
-
+static int initialize_clamav(mod_redsec_terminator_config *config) {
 	config->engine = cl_engine_new();
-	if (!config->engine)
-	{
+	if (!config->engine) {
 		ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to create ClamAV engine");
 	}
 
 	// Initialize ClamAV
-	if (cl_init(CL_INIT_DEFAULT) != CL_SUCCESS)
-	{
+	if (cl_init(CL_INIT_DEFAULT) != CL_SUCCESS) {
 		ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to initialize ClamAV");
 		cl_engine_free(config->engine);
 	}
@@ -81,12 +120,189 @@ static int initialize_clamav(mod_redsec_terminator_config *config)
 	return 0;
 }
 
-// config
+static const char *enable_config_remote(cmd_parms *cmd, void *cfg, const char *arg) {
+	mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)cfg;
+	char *config_remote = apr_pstrdup(cmd->pool, arg);
+
+	if (config_remote == NULL) {
+		config->config_remote = 0;
+		return NULL;
+	} else if (strcmp(config_remote, "On") == 0) {
+		config->config_remote = 1;
+		return NULL;
+	} else {
+		config->config_remote = 0;
+		return NULL;
+	}
+
+	return NULL;
+}
+
+static const char *get_seclang_remote(cmd_parms *cmd, void *cfg, const char *arg) {
+	mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)cfg;
+
+	if (config->config_remote == 1) {
+		config->rule_remote_url = apr_pstrdup(cmd->pool, arg);
+
+		if (config->rule_remote_url == NULL) {
+			ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Remote URL not provided");
+			return NULL;
+		}
+
+		if (config->rule_remote_url[strlen(config->rule_remote_url) - 1] != '/') {
+			config->rule_remote_url = apr_pstrcat(cmd->pool, config->rule_remote_url, "/", NULL);
+		}
+
+		const char *rule_remote_url = NULL;
+		asprintf(&rule_remote_url, "%s%s", config->rule_remote_url, "seclang_rules.conf.txt");
+
+		const char *rule_unicode_remote_url = NULL;
+		asprintf(&rule_unicode_remote_url, "%s%s", config->rule_remote_url, "unicode.mapping.txt");
+
+		ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Remote URL: %s", rule_unicode_remote_url);
+
+		char *response;
+		struct curl_slist *headers = NULL;
+
+		headers = curl_slist_append(headers, "Accept: text/plain");
+		headers = curl_slist_append(headers, "User-Agent: TerminatorUserAgent/1.0");
+
+		int result = http_get(rule_remote_url, headers, &response);
+
+		if(result == 0) {
+			config->sec_rule = apr_pstrdup(cmd->pool, response);
+			free(response);
+
+			char *response_unicode;
+
+			int result_unicode = http_get(rule_unicode_remote_url, headers, &response_unicode);
+
+			if(result_unicode == 0) {
+				config->sec_rule_unicode = apr_pstrdup(cmd->pool, response_unicode);
+				free(response_unicode);
+			} else {
+				ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "HTTP request secrule unicode failed");
+			}
+		} else {
+			ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "HTTP request sec rule failed");
+		}
+
+		curl_slist_free_all(headers);
+	}
+
+	return NULL;
+}
+
+static const char *set_config_path(cmd_parms *cmd, void *cfg, const char *arg)
+{
+	mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)cfg;
+	config->config_path = apr_pstrdup(cmd->pool, arg);
+
+	const char *vhost_name = NULL;
+	char *vhost_port = apr_itoa(cmd->pool, cmd->server->addrs->host_addr->port);
+	char *vhost = cmd->server->addrs->virthost;
+
+	if (strcmp(vhost, "*") == 0) {
+		asprintf(&vhost_name, "%s_%s", "default", vhost_port);
+	} else if (vhost == NULL) {
+		asprintf(&vhost_name, "%s_%s", "default", vhost_port);
+	} else {
+		asprintf(&vhost_name, "%s_%s", vhost, vhost_port);
+	}
+
+	const char *cpath = NULL;
+	const char *httpd_conf_path = ap_server_root_relative(cmd->pool, "terminator.conf.d/");
+
+	if (config->config_path == NULL)
+	{
+		if (check_directory_exists(httpd_conf_path) == 0) {
+			apr_status_t stat = apr_dir_make(httpd_conf_path, APR_OS_DEFAULT, cmd->pool);
+
+			asprintf(&cpath, "%s%s/", httpd_conf_path, vhost_name);
+			config->config_path = apr_pstrdup(cmd->pool, cpath);
+
+			apr_dir_make(config->config_path, APR_OS_DEFAULT, cmd->pool);
+
+			const char *seclang_rules = join_strings(cmd->pool, config->config_path, "seclang_rules.conf");
+			const char *unicode_map = join_strings(cmd->pool, config->config_path, "unicode.mapping");
+
+			apr_file_t *file_seclang;
+			apr_file_open(&file_seclang, seclang_rules, APR_CREATE | APR_WRITE | APR_TRUNCATE, APR_OS_DEFAULT, cmd->pool);
+
+			apr_file_t *file_unicode_map;
+			apr_file_open(&file_unicode_map, seclang_rules, APR_CREATE | APR_WRITE | APR_TRUNCATE, APR_OS_DEFAULT, cmd->pool);
+
+			// write seclang
+			if (config->sec_rule != NULL) {
+				if (write_seclang_to_file(seclang_rules, config->sec_rule) != 0) {
+					ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to write seclang file");
+				}
+			} else {
+				if (write_seclang_to_file(seclang_rules, seclang_data) != 0) {
+					ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to write seclang file");
+				}
+			}
+
+			if (config->sec_rule_unicode != NULL) {
+				if (write_seclang_to_file(unicode_map, config->sec_rule_unicode) != 0) {
+					ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to write unicode.mapping file");
+				}
+			} else {
+				if (write_seclang_to_file(unicode_map, unicode_mapping) != 0) {
+					ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to write unicode.mapping file");
+				}
+			}
+
+			config->rule_path = apr_pstrdup(cmd->pool, seclang_rules);
+			config->path_temporary = apr_pstrdup(cmd->pool, config->config_path);
+		}
+	} else {
+		apr_status_t stat = apr_dir_make(config->config_path, APR_OS_DEFAULT, cmd->pool);
+
+		asprintf(&cpath, "%s%s/", config->config_path, vhost_name);
+		config->config_path = apr_pstrdup(cmd->pool, cpath);
+
+		apr_dir_make(config->config_path, APR_OS_DEFAULT, cmd->pool);
+
+		const char *seclang_rules = join_strings(cmd->pool, config->config_path, "seclang_rules.conf");
+		const char *unicode_map = join_strings(cmd->pool, config->config_path, "unicode.mapping");
+
+		apr_file_t *file_seclang;
+		apr_file_open(&file_seclang, seclang_rules, APR_CREATE | APR_WRITE | APR_TRUNCATE, APR_OS_DEFAULT, cmd->pool);
+
+		apr_file_t *file_unicode_map;
+		apr_file_open(&file_unicode_map, seclang_rules, APR_CREATE | APR_WRITE | APR_TRUNCATE, APR_OS_DEFAULT, cmd->pool);
+
+		// write seclang
+		if (config->sec_rule != NULL) {
+			if (write_seclang_to_file(seclang_rules, config->sec_rule) != 0) {
+				ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to write seclang file");
+			}
+		} else {
+			if (write_seclang_to_file(seclang_rules, seclang_data) != 0) {
+				ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to write seclang file");
+			}
+		}
+
+		if (config->sec_rule_unicode != NULL) {
+			if (write_seclang_to_file(unicode_map, config->sec_rule_unicode) != 0) {
+				ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to write unicode.mapping file");
+			}
+		} else {
+			if (write_seclang_to_file(unicode_map, unicode_mapping) != 0) {
+				ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "mod_redsec_terminator: Failed to write unicode.mapping file");
+			}
+		}
+
+		config->rule_path = apr_pstrdup(cmd->pool, seclang_rules);
+		config->path_temporary = apr_pstrdup(cmd->pool, config->config_path);
+	}
+
+	return NULL;
+}
 
 static const char *set_socket_url(cmd_parms *cmd, void *cfg, const char *arg)
 {
-	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "config set %s", arg);
-
 	mod_redsec_terminator_config *config = (mod_redsec_terminator_config *)cfg;
 	config->socket_url = apr_pstrdup(cmd->pool, arg);
 
@@ -185,7 +401,6 @@ static int send_to_tcp_socket(request_rec *r, const char *url, const char *data)
 // modSec
 static int modSecHandle(request_rec *r)
 {
-
 	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "data: %s", r->server->server_hostname);
 	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "data log : %d", r->server->port);
 	ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "request number : %d", r->method_number);
@@ -208,7 +423,7 @@ static void handleResponse(request_rec *r, const char *path_url)
 	}
 
 	char buffer[8192];
-	apr_size_t bytes_read;
+	// apr_size_t bytes_read;
 
 	while (1)
 	{
@@ -320,6 +535,20 @@ static int mod_redsec_terminator_handler(request_rec *r)
 		else
 		{
 			formData = readBody(r);
+			if (formData) {
+				int i;
+				for (i = 0; &formData[i]; i++) {
+					if (formData[i].key && formData[i].value) {
+						ap_rprintf(r, "%s = %s\n", formData[i].key, formData[i].value);
+					} else if (formData[i].key) {
+						ap_rprintf(r, "%s\n", formData[i].key);
+					} else if (formData[i].value) {
+						ap_rprintf(r, "= %s\n", formData[i].value);
+					} else {
+						break;
+					}
+				}
+			}
 		}
 		if (formData)
 		{
@@ -382,7 +611,6 @@ static int mod_redsec_terminator_handler(request_rec *r)
 	if (modSecVal == NULL)
 	{
 		modSecVal = mod_sec_handler(r, body_obj, rule_path, url_socket);
-		// free(modSecVal);
 	}
 
 	if (modSecVal != NULL)
@@ -391,10 +619,8 @@ static int mod_redsec_terminator_handler(request_rec *r)
 
 		for (size_t i = 0; i < json_object_array_length(upload_filter); i++)
 		{
-			// Ambil objek pada index ke-i dari array
 			json_object *status_message_obj = json_object_array_get_idx(upload_filter, i);
 
-			// Ambil nilai status dan pesan dari objek
 			json_object *status_obj;
 			json_object *message_obj;
 
@@ -415,8 +641,6 @@ static int mod_redsec_terminator_handler(request_rec *r)
 					const char *json_filter = json_object_to_json_string(json_obj);
 
 					send_to_tcp_socket(r, url_socket, json_filter);
-
-					// Send custom HTML response from file
 
 					free(modSecVal);
 
@@ -461,9 +685,12 @@ static void mod_redsec_terminator_register_hooks(apr_pool_t *p)
 }
 
 static const command_rec mod_redsec_terminator_cmds[] = {
-	AP_INIT_TAKE1("RedSecTerminatorURLSocket", set_socket_url, NULL, RSRC_CONF,
-				  "Specify the custom socket URL for data transmission"),
-	{NULL}};
+	AP_INIT_TAKE1("EnableTerminatorConfigRemote", enable_config_remote, NULL, RSRC_CONF, "Enable remote configuration"),
+	AP_INIT_TAKE1("SecRuleConfigRemoteURLPath", get_seclang_remote, NULL, RSRC_CONF, "Enable remote seclang configuration"),
+	AP_INIT_TAKE1("RedSecTerminatorConfigPath", set_config_path, NULL, RSRC_CONF, "Specify the custom configuration path"),
+	AP_INIT_TAKE1("RedSecTerminatorURLSocket", set_socket_url, NULL, RSRC_CONF, "Specify the custom socket URL for data transmission"),
+	{NULL}
+};
 
 module AP_MODULE_DECLARE_DATA mod_redsec_terminator_module = {
 	STANDARD20_MODULE_STUFF,

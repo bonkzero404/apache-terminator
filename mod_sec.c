@@ -3,7 +3,7 @@
 
 static ModSecValuePair *process_intervention(request_rec *r, Transaction *trans)
 {
-	ModSecValuePair *msvp = malloc(sizeof(ModSecValuePair)); // Allocate memory for ModSecValuePair
+	ModSecValuePair *msvp = malloc(sizeof(ModSecValuePair));
 	if (!msvp)
 	{
 		ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "Failed to allocate memory for ModSecValuePair");
@@ -21,9 +21,6 @@ static ModSecValuePair *process_intervention(request_rec *r, Transaction *trans)
 
 	if (it.log != NULL)
 	{
-		// ap_rprintf(r, "Detected message: %s\n", it.log);
-
-		// Example parsing to extract specific message
 		const char *xssMsg = "msg \"";
 		const char *msgStart = strstr(it.log, xssMsg);
 		if (msgStart)
@@ -32,7 +29,7 @@ static ModSecValuePair *process_intervention(request_rec *r, Transaction *trans)
 			const char *msgEnd = strchr(msgStart, '"');
 			if (msgEnd)
 			{
-				char *msg = malloc(msgEnd - msgStart + 1); // Allocate memory for message
+				char *msg = malloc(msgEnd - msgStart + 1);
 				if (msg)
 				{
 					strncpy(msg, msgStart, msgEnd - msgStart);

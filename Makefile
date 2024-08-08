@@ -1,12 +1,12 @@
 MODULE_NAME = mod_redsec_terminator
 
-SRC_FILES = mod_redsec_terminator.c util.c body_reader.c json_reader.c form_reader.c mod_sec.c clamav_sec.c tcp_handle.c
+SRC_FILES = mod_redsec_terminator.c util.c body_reader.c json_reader.c form_reader.c mod_sec.c clamav_sec.c tcp_handle.c seclang.c http_client.c
 
 OUTPUT_FILE = $(MODULE_NAME).so
 
 CC = gcc
 CFLAGS = -std=c17 -fPIC -Wall -I/usr/include/httpd -I/usr/include/apr-1 -I/usr/include/apr-util-1 -I/usr/include/json-c -I/usr/include/json-c -I/usr/local/modsecurity/include
-LDFLAGS = -shared -L/usr/local/modsecurity/lib -lmodsecurity -ljson-c -lclamav
+LDFLAGS = -shared -L/usr/local/modsecurity/lib -lmodsecurity -ljson-c -lclamav -lcurl
 
 APXS = apxs
 
